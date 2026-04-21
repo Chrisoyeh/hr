@@ -1,0 +1,622 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HR Management Suite</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell" id="authShell">
+    <div class="auth-backdrop"></div>
+    <div class="auth-card">
+      <div class="brand-badge mb-4">
+        <span class="brand-mark"><i class="bi bi-building-fill"></i></span>
+        <div>
+          <div class="brand-name">HR Management Suite</div>
+          <small class="text-muted">Bootstrap + localStorage</small>
+        </div>
+      </div>
+      <h1 class="auth-title">Sign in to the admin console</h1>
+      <p class="auth-copy">Manage employees, attendance, deductions, tasks, reports, finance, and budgets from one dashboard.</p>
+      <form id="loginForm" class="auth-form">
+        <div class="mb-3">
+          <label class="form-label" for="email">Email</label>
+          <input class="form-control form-control-lg" id="email" name="email" type="email" placeholder="admin@hr.local" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="password">Password</label>
+          <input class="form-control form-control-lg" id="password" name="password" type="password" placeholder="Admin@123" required>
+        </div>
+        <button class="btn btn-primary btn-lg w-100" type="submit">Sign In</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="app-layout d-none" id="appShell">
+    <aside class="sidebar" id="sidebarPanel">
+      <div class="sidebar-brand">
+        <span class="brand-mark"><i class="bi bi-building-fill"></i></span>
+        <div>
+          <div class="brand-name">HR Management</div>
+          <small>HLTS LTD Operations Hub</small>
+        </div>
+      </div>
+      <nav class="nav flex-column gap-2 mt-4" id="sidebarNav">
+        <button class="nav-link active" data-view="dashboardView"><i class="bi bi-speedometer2"></i><span>Dashboard</span></button>
+        <button class="nav-link" data-view="employeesView"><i class="bi bi-people"></i><span>Employees</span></button>
+        <button class="nav-link" data-view="attendanceView"><i class="bi bi-clock-history"></i><span>Attendance</span></button>
+        <button class="nav-link" data-view="tasksView"><i class="bi bi-list-check"></i><span>Tasks</span></button>
+        <button class="nav-link" data-view="reportsView"><i class="bi bi-journal-text"></i><span>Reports</span></button>
+        <button class="nav-link" data-view="financeView"><i class="bi bi-cash-coin"></i><span>Finance</span></button>
+        <button class="nav-link" data-view="payrollView"><i class="bi bi-receipt-cutoff"></i><span>Payroll</span></button>
+        <button class="nav-link" data-view="budgetView"><i class="bi bi-pie-chart"></i><span>Budget</span></button>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="small text-uppercase text-white-50">Session</div>
+        <div id="sessionUserName" class="fw-semibold"></div>
+        <div id="sessionUserRole" class="text-white-50 small"></div>
+        <button class="btn btn-outline-light btn-sm mt-3 w-100" id="logoutBtn">Logout</button>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <button class="btn btn-outline-secondary d-lg-none" id="mobileMenuBtn" type="button"><i class="bi bi-list"></i></button>
+        <div>
+          <div class="eyebrow">HR Operations</div>
+          <h2 class="page-title mb-0" id="pageTitle">Dashboard</h2>
+        </div>
+        <div class="topbar-actions">
+          <div class="badge rounded-pill text-bg-light px-3 py-2" id="liveClock"></div>
+        </div>
+      </header>
+
+      <div class="container-fluid px-0">
+        <section class="view-panel active" id="dashboardView">
+          <div class="summary-grid mb-4">
+            <div class="summary-card"><span>Total Employees</span><strong id="totalEmployeesCard">0</strong></div>
+            <div class="summary-card"><span>Present Today</span><strong id="presentTodayCard">0</strong></div>
+            <div class="summary-card"><span>Absent Today</span><strong id="absentTodayCard">0</strong></div>
+            <div class="summary-card"><span>Total Deductions</span><strong id="totalDeductionsCard">NGN 0</strong></div>
+            <div class="summary-card"><span>Net Salary Paid</span><strong id="netSalaryCard">NGN 0</strong></div>
+          </div>
+
+          <div class="row g-4 mb-4">
+            <div class="col-12 col-xl-6">
+              <div class="panel-card compact-chart-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Attendance Trends</h3>
+                    <p>Last 7 days employee presence.</p>
+                  </div>
+                </div>
+                <div class="compact-chart-wrap"><canvas id="attendanceChart"></canvas></div>
+              </div>
+            </div>
+            <div class="col-12 col-xl-6">
+              <div class="panel-card compact-chart-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Task Completion</h3>
+                    <p>Completed vs incomplete tasks.</p>
+                  </div>
+                </div>
+                <div class="compact-chart-wrap"><canvas id="tasksChart"></canvas></div>
+              </div>
+            </div>
+            <div class="col-12 col-xl-6">
+              <div class="panel-card compact-chart-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Salary Deductions</h3>
+                    <p>Breakdown by penalty type.</p>
+                  </div>
+                </div>
+                <div class="compact-chart-wrap"><canvas id="deductionsChart"></canvas></div>
+              </div>
+            </div>
+            <div class="col-12 col-xl-6">
+              <div class="panel-card compact-chart-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Profit & Loss</h3>
+                    <p>Revenue, expenses, and profit.</p>
+                  </div>
+                </div>
+                <div class="compact-chart-wrap"><canvas id="financeChart"></canvas></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view-panel" id="employeesView">
+          <div class="row g-4">
+            <div class="col-12 col-xl-4">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3 id="employeeFormTitle">Add Employee</h3>
+                    <p>Maintain employee records.</p>
+                  </div>
+                </div>
+                <form id="employeeForm" class="stack-form">
+                  <input type="hidden" id="employeeId">
+                  <div>
+                    <label class="form-label">Full Name</label>
+                    <input class="form-control" id="employeeName" required>
+                  </div>
+                  <div>
+                    <label class="form-label">Position</label>
+                    <input class="form-control" id="employeePosition" required>
+                  </div>
+                  <div>
+                    <label class="form-label">Department</label>
+                    <input class="form-control" id="employeeDepartment" required>
+                  </div>
+                  <div>
+                    <label class="form-label">Salary (NGN)</label>
+                    <input class="form-control" id="employeeSalary" type="number" min="0" step="1" required>
+                  </div>
+                  <div class="d-flex gap-2">
+                    <button class="btn btn-primary flex-fill" type="submit" id="employeeSubmitBtn">Save Employee</button>
+                    <button class="btn btn-outline-secondary" type="button" id="employeeResetBtn">Reset</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+            <div class="col-12 col-xl-8">
+              <div class="panel-card">
+                <div class="panel-header flex-column flex-md-row align-items-md-center gap-3">
+                  <div>
+                    <h3>Employee Directory</h3>
+                    <p>Search, edit, or remove staff records.</p>
+                  </div>
+                  <div class="ms-md-auto search-wrap">
+                    <input class="form-control" id="employeeSearch" placeholder="Search employees...">
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr>
+                        <th>ID</th><th>Name</th><th>Position</th><th>Department</th><th class="text-end">Salary</th><th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="employeeTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view-panel" id="attendanceView">
+          <div class="row g-4">
+            <div class="col-12 col-xl-4">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Log Attendance</h3>
+                    <p>Track daily presence and time.</p>
+                  </div>
+                </div>
+                <form id="attendanceForm" class="stack-form">
+                  <div>
+                    <label class="form-label">Employee</label>
+                    <select class="form-select" id="attendanceEmployee" required></select>
+                  </div>
+                  <div>
+                    <label class="form-label">Date</label>
+                    <input class="form-control" id="attendanceDate" type="date" required>
+                  </div>
+                  <div class="row g-3">
+                    <div class="col-6">
+                      <label class="form-label">Status</label>
+                      <select class="form-select" id="attendanceStatus" required>
+                        <option>Present</option>
+                        <option>Absent</option>
+                      </select>
+                    </div>
+                    <div class="col-6">
+                      <label class="form-label">Permission</label>
+                      <select class="form-select" id="attendancePermission">
+                        <option value="No">No</option>
+                        <option value="Yes">Yes</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="row g-3">
+                    <div class="col-6">
+                      <label class="form-label">Time In</label>
+                      <input class="form-control" id="attendanceTimeIn" type="time">
+                    </div>
+                    <div class="col-6">
+                      <label class="form-label">Time Out</label>
+                      <input class="form-control" id="attendanceTimeOut" type="time">
+                    </div>
+                  </div>
+                  <button class="btn btn-primary" type="submit">Save Attendance</button>
+                  <div class="small text-muted">Late arrival is auto-detected after 7:45 AM without permission.</div>
+                </form>
+              </div>
+            </div>
+            <div class="col-12 col-xl-8">
+              <div class="panel-card">
+                <div class="panel-header flex-column flex-md-row align-items-md-center gap-3">
+                  <div>
+                    <h3>Attendance Logs</h3>
+                    <p>Today and historical entries with penalties.</p>
+                  </div>
+                  <div class="ms-md-auto search-wrap">
+                    <input class="form-control" id="attendanceSearch" placeholder="Search logs...">
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th><th>Employee</th><th>Status</th><th>Time In</th><th>Late?</th><th>Permission</th><th class="text-end">Penalty</th><th></th>
+                      </tr>
+                    </thead>
+                    <tbody id="attendanceTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view-panel" id="tasksView">
+          <div class="row g-4">
+            <div class="col-12 col-xl-4">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3 id="taskFormTitle">Assign Task</h3>
+                    <p>Track progress and deadlines.</p>
+                  </div>
+                </div>
+                <form id="taskForm" class="stack-form">
+                  <input type="hidden" id="taskId">
+                  <div>
+                    <label class="form-label">Employee</label>
+                    <select class="form-select" id="taskEmployee" required></select>
+                  </div>
+                  <div>
+                    <label class="form-label">Title</label>
+                    <input class="form-control" id="taskTitle" required>
+                  </div>
+                  <div>
+                    <label class="form-label">Description</label>
+                    <textarea class="form-control" id="taskDescription" rows="4" required></textarea>
+                  </div>
+                  <div class="row g-3">
+                    <div class="col-6">
+                      <label class="form-label">Deadline</label>
+                      <input class="form-control" id="taskDeadline" type="date" required>
+                    </div>
+                    <div class="col-6">
+                      <label class="form-label">Completion %</label>
+                      <input class="form-control" id="taskProgress" type="number" min="10" max="100" step="10" value="10" required>
+                    </div>
+                  </div>
+                  <div class="d-flex gap-2">
+                    <button class="btn btn-primary flex-fill" type="submit">Save Task</button>
+                    <button class="btn btn-outline-secondary" type="button" id="taskResetBtn">Reset</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+            <div class="col-12 col-xl-8">
+              <div class="panel-card">
+                <div class="panel-header flex-column flex-md-row align-items-md-center gap-3">
+                  <div>
+                    <h3>Task Board</h3>
+                    <p>Incomplete work is automatically flagged.</p>
+                  </div>
+                  <div class="ms-md-auto search-wrap">
+                    <input class="form-control" id="taskSearch" placeholder="Search tasks...">
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr>
+                        <th>Task</th><th>Employee</th><th>Deadline</th><th class="text-end">Progress</th><th>Status</th><th class="text-end">Penalty</th><th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="taskTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view-panel" id="reportsView">
+          <div class="row g-4">
+            <div class="col-12 col-xl-4">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Weekly Report Submission</h3>
+                    <p>Submit and track weekly updates.</p>
+                  </div>
+                </div>
+                <form id="reportForm" class="stack-form">
+                  <div>
+                    <label class="form-label">Employee</label>
+                    <select class="form-select" id="reportEmployee" required></select>
+                  </div>
+                  <div>
+                    <label class="form-label">Report Title</label>
+                    <input class="form-control" id="reportTitle" required>
+                  </div>
+                  <div>
+                    <label class="form-label">Report Content</label>
+                    <textarea class="form-control" id="reportContent" rows="5" required></textarea>
+                  </div>
+                  <button class="btn btn-primary" type="submit">Submit Report</button>
+                  <div class="small text-muted">Late submission after Saturday 10:00 AM attracts a penalty.</div>
+                </form>
+              </div>
+            </div>
+            <div class="col-12 col-xl-8">
+              <div class="panel-card">
+                <div class="panel-header flex-column flex-md-row align-items-md-center gap-3">
+                  <div>
+                    <h3>Report Register</h3>
+                    <p>All employee submissions and penalties.</p>
+                  </div>
+                  <div class="ms-md-auto search-wrap">
+                    <input class="form-control" id="reportSearch" placeholder="Search reports...">
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr>
+                        <th>Submitted</th><th>Employee</th><th>Title</th><th>Status</th><th class="text-end">Penalty</th><th></th>
+                      </tr>
+                    </thead>
+                    <tbody id="reportTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view-panel" id="financeView">
+          <div class="row g-4">
+            <div class="col-12 col-xl-4">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Income Entry</h3>
+                    <p>Record revenue and expenses.</p>
+                  </div>
+                </div>
+                <form id="incomeForm" class="stack-form">
+                  <div>
+                    <label class="form-label">Type</label>
+                    <select class="form-select" id="incomeType" required>
+                      <option value="Revenue">Revenue</option>
+                      <option value="Expense">Expense</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="form-label">Category</label>
+                    <input class="form-control" id="incomeCategory" placeholder="Payroll / Ops / Sales" required>
+                  </div>
+                  <div>
+                    <label class="form-label">Amount (NGN)</label>
+                    <input class="form-control" id="incomeAmount" type="number" min="0" step="1" required>
+                  </div>
+                  <div>
+                    <label class="form-label">Date</label>
+                    <input class="form-control" id="incomeDate" type="date" required>
+                  </div>
+                  <div>
+                    <label class="form-label">Description</label>
+                    <textarea class="form-control" id="incomeDescription" rows="3"></textarea>
+                  </div>
+                  <button class="btn btn-primary" type="submit">Save Entry</button>
+                </form>
+              </div>
+            </div>
+            <div class="col-12 col-xl-8">
+              <div class="panel-card mb-4">
+                <div class="panel-header flex-column flex-md-row align-items-md-center gap-3">
+                  <div>
+                    <h3>Income Table</h3>
+                    <p>Revenue, expenses, and profitability.</p>
+                  </div>
+                  <div class="ms-md-auto d-flex gap-2 flex-wrap">
+                    <select class="form-select form-select-sm filter-select" id="financeRangeFilter">
+                      <option value="monthly">Monthly</option>
+                      <option value="fourMonths">Every 4 Months</option>
+                      <option value="yearly">Yearly</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th><th>Type</th><th>Category</th><th>Description</th><th class="text-end">Amount</th><th></th>
+                      </tr>
+                    </thead>
+                    <tbody id="incomeTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="row g-4">
+                <div class="col-12 col-md-4"><div class="mini-metric"><span>Revenue</span><strong id="revenueMetric">NGN 0</strong></div></div>
+                <div class="col-12 col-md-4"><div class="mini-metric"><span>Expenses</span><strong id="expensesMetric">NGN 0</strong></div></div>
+                <div class="col-12 col-md-4"><div class="mini-metric"><span>Profit / Loss</span><strong id="profitMetric">NGN 0</strong></div></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view-panel" id="payrollView">
+          <div class="row g-4">
+            <div class="col-12 col-xl-4">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3 id="payrollAdjustmentFormTitle">Payroll Adjustments</h3>
+                    <p>Record loans, salary advances, and bonuses.</p>
+                  </div>
+                </div>
+                <form id="payrollAdjustmentForm" class="stack-form">
+                  <input type="hidden" id="payrollAdjustmentId">
+                  <div>
+                    <label class="form-label">Employee</label>
+                    <select class="form-select" id="payrollAdjustmentEmployee" required></select>
+                  </div>
+                  <div>
+                    <label class="form-label">Adjustment Type</label>
+                    <select class="form-select" id="payrollAdjustmentType" required>
+                      <option value="Loan">Loan</option>
+                      <option value="Advance">Salary Advance</option>
+                      <option value="Bonus">Bonus</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="form-label">Amount (NGN)</label>
+                    <input class="form-control" id="payrollAdjustmentAmount" type="number" min="0" step="1" required>
+                  </div>
+                  <div>
+                    <label class="form-label">Date</label>
+                    <input class="form-control" id="payrollAdjustmentDate" type="date" required>
+                  </div>
+                  <div>
+                    <label class="form-label">Notes</label>
+                    <textarea class="form-control" id="payrollAdjustmentNotes" rows="3" placeholder="Optional note"></textarea>
+                  </div>
+                  <div class="d-flex gap-2">
+                    <button class="btn btn-primary flex-fill" type="submit" id="payrollAdjustmentSubmitBtn">Save Adjustment</button>
+                    <button class="btn btn-outline-secondary" type="button" id="payrollAdjustmentResetBtn">Reset</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+            <div class="col-12 col-xl-8">
+              <div class="panel-card mb-4">
+                <div class="panel-header flex-column flex-md-row align-items-md-center gap-3">
+                  <div>
+                    <h3>Adjustment Ledger</h3>
+                    <p>Loans and advances reduce net salary, bonuses increase it.</p>
+                  </div>
+                  <div class="ms-md-auto search-wrap">
+                    <input class="form-control" id="payrollAdjustmentSearch" placeholder="Search payroll entries..." >
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th><th>Employee</th><th>Type</th><th class="text-end">Amount</th><th>Notes</th><th></th>
+                      </tr>
+                    </thead>
+                    <tbody id="payrollAdjustmentTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="row g-4 mb-4">
+                <div class="col-12 col-md-3"><div class="mini-metric"><span>Total Loans</span><strong id="payrollLoansMetric">NGN 0</strong></div></div>
+                <div class="col-12 col-md-3"><div class="mini-metric"><span>Total Advances</span><strong id="payrollAdvancesMetric">NGN 0</strong></div></div>
+                <div class="col-12 col-md-3"><div class="mini-metric"><span>Total Bonuses</span><strong id="payrollBonusesMetric">NGN 0</strong></div></div>
+                <div class="col-12 col-md-3"><div class="mini-metric"><span>Net Payroll</span><strong id="payrollNetMetric">NGN 0</strong></div></div>
+              </div>
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Employee Salary Summary</h3>
+                    <p>Gross salary, adjustments, and final amount payable.</p>
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr>
+                        <th>Employee</th><th class="text-end">Base Salary</th><th class="text-end">Bonuses</th><th class="text-end">Loans + Advances</th><th class="text-end">Other Deductions</th><th class="text-end">Net Salary</th>
+                      </tr>
+                    </thead>
+                    <tbody id="payrollSummaryTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view-panel" id="budgetView">
+          <div class="row g-4">
+            <div class="col-12 col-xl-4">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Budget Planner</h3>
+                    <p>Set salary and operations limits.</p>
+                  </div>
+                </div>
+                <form id="budgetForm" class="stack-form">
+                  <div>
+                    <label class="form-label">Salary Budget (NGN)</label>
+                    <input class="form-control" id="salaryBudget" type="number" min="0" step="1" required>
+                  </div>
+                  <div>
+                    <label class="form-label">Operations Budget (NGN)</label>
+                    <input class="form-control" id="operationsBudget" type="number" min="0" step="1" required>
+                  </div>
+                  <button class="btn btn-primary" type="submit">Update Budget</button>
+                </form>
+              </div>
+            </div>
+            <div class="col-12 col-xl-8">
+              <div class="panel-card mb-4">
+                <div class="panel-header">
+                  <div>
+                    <h3>Actual Spending vs Budget</h3>
+                    <p>Automatic alerts when spending exceeds limits.</p>
+                  </div>
+                </div>
+                <div class="row g-4 budget-grid">
+                  <div class="col-12 col-md-6"><div class="budget-card"><span>Salary Budget</span><strong id="budgetSalaryValue">NGN 0</strong><small id="budgetSalaryStatus"></small></div></div>
+                  <div class="col-12 col-md-6"><div class="budget-card"><span>Operations Budget</span><strong id="budgetOperationsValue">NGN 0</strong><small id="budgetOperationsStatus"></small></div></div>
+                  <div class="col-12 col-md-6"><div class="budget-card"><span>Salary Actual</span><strong id="budgetSalaryActual">NGN 0</strong><small>Calculated from net payroll</small></div></div>
+                  <div class="col-12 col-md-6"><div class="budget-card"><span>Operations Actual</span><strong id="budgetOperationsActual">NGN 0</strong><small>Calculated from non-salary expenses</small></div></div>
+                </div>
+              </div>
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Budget Alerts</h3>
+                    <p>Over-limit items appear here instantly.</p>
+                  </div>
+                </div>
+                <div id="budgetAlerts" class="alert-stack"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toastContainer"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
