@@ -1,0 +1,85 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: appState
+    // Document ID: main
+    // Fields:
+    //   - users: list (required, max 100 items) - app login records with name, email, role, and passwordHash
+    //   - employees: list (required, max 1000 items) - employee records with payroll data
+    //   - attendance: list (required, max 5000 items) - attendance logs with date/time/status details
+    //   - tasks: list (required, max 5000 items) - task assignments and completion data
+    //   - reports: list (required, max 5000 items) - weekly report submissions
+    //   - income: list (required, max 5000 items) - finance and expense entries
+    //   - payrollAdjustments: list (required, max 5000 items) - loans, advances, and bonuses
+    //   - budget: map (required) - salary and operations budget values
+    //
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isPositiveNumber(value) {
+      return value is number && value >= 0;
+    }
+
+    function isSmallList(value, maxSize) {
+      return value is list && value.size() <= maxSize;
+    }
+
+    function isValidBudget(budget) {
+      return budget is map
+        && budget.keys().hasOnly(['salary', 'operations'])
+        && isPositiveNumber(budget.salary)
+        && isPositiveNumber(budget.operations);
+    }
+
+    function isValidSettings(settings) {
+      return settings is map
+        && settings.keys().hasOnly(['attendanceLocked', 'attendanceLockedAt', 'attendanceLockedBy'])
+        && settings.attendanceLocked is bool;
+    }
+
+    function isValidPayrollPayments(payrollPayments) {
+      return payrollPayments is list && payrollPayments.size() <= 5000;
+    }
+
+    function isValidAppState(data) {
+      return data is map
+        && data.keys().hasOnly([
+          'users',
+          'employees',
+          'attendance',
+          'tasks',
+          'reports',
+          'income',
+          'payrollAdjustments',
+          'payrollPayments',
+          'budget',
+          'settings'
+        ])
+        && isSmallList(data.users, 100)
+        && isSmallList(data.employees, 1000)
+        && isSmallList(data.attendance, 5000)
+        && isSmallList(data.tasks, 5000)
+        && isSmallList(data.reports, 5000)
+        && isSmallList(data.income, 5000)
+        && isSmallList(data.payrollAdjustments, 5000)
+        && isValidPayrollPayments(data.payrollPayments)
+        && isValidBudget(data.budget)
+        && isValidSettings(data.settings);
+    }
+
+    match /appState/main {
+      allow read: if true;
+      allow create, update: if isValidAppState(request.resource.data);
+      allow delete: if false;
+    }
+  }
+}

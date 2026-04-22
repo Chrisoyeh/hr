@@ -1,29 +1,61 @@
-const STORAGE_KEY = 'hr-management-db-v2';
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js';
+import { doc, getDoc, getFirestore, setDoc } from 'https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js';
+
 const SESSION_KEY = 'hr-management-session-v1';
 const LATE_CUTOFF = '07:45';
 const CLOSING_TIME = '15:30';
+const firebaseConfig = {
+  apiKey: 'AIzaSyDMGBOcLA8xf7dpFlQy4jeLTtWFcHIHUf0',
+  authDomain: 'hlts-ltd-hr.firebaseapp.com',
+  projectId: 'hlts-ltd-hr',
+  storageBucket: 'hlts-ltd-hr.firebasestorage.app',
+  messagingSenderId: '317869307639',
+  appId: '1:317869307639:web:d03eca24021447b1e9c5f2',
+  measurementId: 'G-PK4BTRN4B6'
+};
+const firebaseApp = initializeApp(firebaseConfig);
+const firebaseDb = getFirestore(firebaseApp);
+const firebaseAppStateRef = doc(firebaseDb, 'appState', 'main');
 
 const defaultSeed = {
   users: [
-    { name: 'System Admin', email: 'admin@hr.local', role: 'admin', password: 'Admin@123' },
-    { name: 'Staff User', email: 'staff@hr.local', role: 'staff', password: 'Staff@123' }
+    { name: 'System Admin', username: 'Admin', email: 'admin@hr.local', role: 'admin', password: 'Chrisella1!' },
+    { name: 'Staff User', username: 'staff@hr.local', email: 'staff@hr.local', role: 'staff', password: 'EMP-9001', employeeId: 'EMP-9001' }
   ],
-  employees: [],
+  employees: [
+    {
+      id: 'EMP-9001',
+      fullName: 'Staff User',
+      email: 'staff@hr.local',
+      username: 'staff@hr.local',
+      position: 'Staff Officer',
+      department: 'Operations',
+      salary: 250000,
+      salaryPaid: false,
+      salaryPaidAt: null,
+      createdAt: new Date().toISOString()
+    }
+  ],
   attendance: [],
   tasks: [],
   reports: [],
   income: [],
   payrollAdjustments: [],
+  payrollPayments: [],
   budget: {
     salary: 0,
     operations: 0
+  },
+  settings: {
+    attendanceLocked: false
   }
 };
 
 const state = {
   db: null,
   session: null,
-  charts: {}
+  charts: {},
+  credentialCache: {}
 };
 
 const dom = {};
@@ -78,26 +110,220 @@ async function hashPassword(password) {
   return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function loadDatabase() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) {
-    const seeded = await createSeedDatabase();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(seeded));
-    return seeded;
+function generatePassword(length = 10) {
+  const charset = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
+  const bytes = crypto.getRandomValues(new Uint32Array(length));
+  return Array.from(bytes, (value) => charset[value % charset.length]).join('');
+}
+
+function slugifyName(value) {
+  return String(value || 'staff')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 20) || 'staff';
+}
+
+function buildEmployeeUsername(fullName, employeeId) {
+  return `${slugifyName(fullName)}-${String(employeeId || '').slice(-4).toLowerCase()}`;
+}
+
+function buildEmployeeCredentials(employee) {
+  const username = String(employee.email || employee.username || buildEmployeeEmail(employee.fullName, employee.id)).toLowerCase();
+  const password = String(employee.id || '').toUpperCase();
+  return { username, password };
+}
+
+function buildEmployeeEmail(fullName, employeeId) {
+  return `${slugifyName(fullName || employeeId || 'staff')}@hr.local`;
+}
+
+function getCurrentPayrollPeriodKey(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function getPayrollPeriodLabel(periodKey) {
+  if (!periodKey) return 'Unknown period';
+  const [year, month] = periodKey.split('-').map(Number);
+  if (!year || !month) return periodKey;
+  return new Date(year, month - 1, 1).toLocaleDateString('en-NG', { month: 'long', year: 'numeric' });
+}
+
+function getSelectedPayrollPeriodKey() {
+  return dom.payrollPeriodFilter?.value || getCurrentPayrollPeriodKey();
+}
+
+function buildPayrollPeriodOptions() {
+  const periodKeys = new Set();
+
+  for (let offset = 11; offset >= 0; offset -= 1) {
+    const date = new Date();
+    date.setMonth(date.getMonth() - offset, 1);
+    periodKeys.add(getCurrentPayrollPeriodKey(date));
   }
 
-  const parsed = JSON.parse(raw);
-  if (!Array.isArray(parsed.payrollAdjustments)) {
-    parsed.payrollAdjustments = [];
+  state.db.payrollPayments.forEach((entry) => {
+    if (entry?.periodKey) periodKeys.add(entry.periodKey);
+  });
+
+  state.db.employees.forEach((employee) => {
+    if (employee?.salaryPaidAt) periodKeys.add(new Date(employee.salaryPaidAt).toISOString().slice(0, 7));
+  });
+
+  return [...periodKeys].sort().reverse();
+}
+
+function populatePayrollPeriodFilter() {
+  if (!dom.payrollPeriodFilter) return;
+
+  const selectedPeriod = dom.payrollPeriodFilter.value || getCurrentPayrollPeriodKey();
+  const options = buildPayrollPeriodOptions();
+  dom.payrollPeriodFilter.innerHTML = options
+    .map((periodKey) => `<option value="${periodKey}">${getPayrollPeriodLabel(periodKey)}</option>`)
+    .join('');
+
+  if (options.includes(selectedPeriod)) {
+    dom.payrollPeriodFilter.value = selectedPeriod;
+  } else if (options.length) {
+    dom.payrollPeriodFilter.value = options[0];
   }
-  if (parsed.users?.some((user) => !user.passwordHash)) {
-    parsed.users = await Promise.all(parsed.users.map(async (user) => ({
+}
+
+function getPayrollPayment(employeeId, periodKey = getCurrentPayrollPeriodKey()) {
+  return state.db.payrollPayments.find((entry) => entry.employeeId === employeeId && entry.periodKey === periodKey) || null;
+}
+
+function setPayrollPayment(employeeId, periodKey, paid) {
+  const existingIndex = state.db.payrollPayments.findIndex((entry) => entry.employeeId === employeeId && entry.periodKey === periodKey);
+  const existing = existingIndex >= 0 ? state.db.payrollPayments[existingIndex] : null;
+  const updated = {
+    id: existing?.id || crypto.randomUUID(),
+    employeeId,
+    periodKey,
+    paid: Boolean(paid),
+    paidAt: paid ? (existing?.paidAt || new Date().toISOString()) : null,
+    paidBy: paid ? (state.session?.email || state.session?.name || 'admin') : null
+  };
+
+  if (existingIndex >= 0) {
+    state.db.payrollPayments[existingIndex] = updated;
+  } else {
+    state.db.payrollPayments.push(updated);
+  }
+
+  return updated;
+}
+
+function normalizeDatabase(database) {
+  return {
+    users: Array.isArray(database?.users) ? database.users : [],
+    employees: Array.isArray(database?.employees) ? database.employees : [],
+    attendance: Array.isArray(database?.attendance) ? database.attendance : [],
+    tasks: Array.isArray(database?.tasks) ? database.tasks : [],
+    reports: Array.isArray(database?.reports) ? database.reports : [],
+    income: Array.isArray(database?.income) ? database.income : [],
+    payrollAdjustments: Array.isArray(database?.payrollAdjustments) ? database.payrollAdjustments : [],
+    payrollPayments: Array.isArray(database?.payrollPayments) ? database.payrollPayments : [],
+    budget: {
+      ...defaultSeed.budget,
+      ...(database?.budget || {})
+    },
+    settings: {
+      ...defaultSeed.settings,
+      ...(database?.settings || {})
+    }
+  };
+}
+
+async function prepareDatabase(database) {
+  const normalized = normalizeDatabase(database);
+
+  if (normalized.users.some((user) => !user.passwordHash)) {
+    normalized.users = await Promise.all(normalized.users.map(async (user) => ({
       ...user,
       passwordHash: user.passwordHash || await hashPassword(user.password || 'password')
     })));
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
   }
-  return parsed;
+
+  normalized.users = await Promise.all(normalized.users.map(async (user) => {
+    if (user.role === 'admin') {
+      return {
+        ...user,
+        username: 'Admin',
+        email: user.email || 'admin@hr.local',
+        passwordHash: await hashPassword('Chrisella1!')
+      };
+    }
+
+    return user;
+  }));
+
+  const nonStaffUsers = normalized.users.filter((user) => user.role !== 'staff' || !user.employeeId);
+  const syncedEmployees = [];
+  const syncedStaffUsers = [];
+  const syncedPayrollPayments = Array.isArray(normalized.payrollPayments) ? [...normalized.payrollPayments] : [];
+  const payrollPaymentKeys = new Set(syncedPayrollPayments.map((entry) => `${entry.employeeId}|${entry.periodKey}`));
+
+  for (const employee of normalized.employees) {
+    const email = String(employee.email || employee.username || buildEmployeeEmail(employee.fullName, employee.id)).toLowerCase();
+    const salaryPaid = Boolean(employee.salaryPaid);
+    const salaryPaidAt = salaryPaid ? (employee.salaryPaidAt || new Date().toISOString()) : null;
+    const legacyPeriodKey = employee.salaryPaidAt ? new Date(employee.salaryPaidAt).toISOString().slice(0, 7) : getCurrentPayrollPeriodKey();
+
+    if (salaryPaid && !payrollPaymentKeys.has(`${employee.id}|${legacyPeriodKey}`)) {
+      syncedPayrollPayments.push({
+        id: crypto.randomUUID(),
+        employeeId: employee.id,
+        periodKey: legacyPeriodKey,
+        paid: true,
+        paidAt: salaryPaidAt || new Date().toISOString(),
+        paidBy: 'migration'
+      });
+      payrollPaymentKeys.add(`${employee.id}|${legacyPeriodKey}`);
+    }
+
+    syncedEmployees.push({
+      ...employee,
+      email,
+      username: email,
+      salaryPaid,
+      salaryPaidAt
+    });
+
+    syncedStaffUsers.push({
+      name: employee.fullName,
+      username: email,
+      email,
+      role: 'staff',
+      employeeId: employee.id,
+      passwordHash: await hashPassword(employee.id)
+    });
+  }
+
+  normalized.employees = syncedEmployees;
+  normalized.users = [...nonStaffUsers, ...syncedStaffUsers];
+  normalized.payrollPayments = syncedPayrollPayments.map((entry) => ({
+    ...entry,
+    paid: Boolean(entry.paid),
+    paidAt: entry.paid ? (entry.paidAt || new Date().toISOString()) : null,
+    paidBy: entry.paid ? (entry.paidBy || null) : null
+  }));
+
+  return normalized;
+}
+
+async function loadDatabase() {
+  const snapshot = await getDoc(firebaseAppStateRef);
+
+  if (!snapshot.exists()) {
+    const seeded = await createSeedDatabase();
+    await setDoc(firebaseAppStateRef, seeded);
+    return seeded;
+  }
+
+  const prepared = await prepareDatabase(snapshot.data());
+  await setDoc(firebaseAppStateRef, prepared);
+  return prepared;
 }
 
 async function createSeedDatabase() {
@@ -105,8 +331,10 @@ async function createSeedDatabase() {
   for (const user of defaultSeed.users) {
     users.push({
       name: user.name,
+      username: user.username,
       email: user.email,
       role: user.role,
+      employeeId: user.employeeId || null,
       passwordHash: await hashPassword(user.password)
     });
   }
@@ -119,12 +347,17 @@ async function createSeedDatabase() {
     reports: defaultSeed.reports,
     income: defaultSeed.income,
     payrollAdjustments: defaultSeed.payrollAdjustments || [],
-    budget: defaultSeed.budget
+    payrollPayments: defaultSeed.payrollPayments || [],
+    budget: defaultSeed.budget,
+    settings: defaultSeed.settings
   };
 }
 
 function saveDatabase() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.db));
+  void setDoc(firebaseAppStateRef, state.db).catch((error) => {
+    console.error('Failed to sync Firestore state:', error);
+    showToast('Unable to sync data to Firebase.', 'danger');
+  });
 }
 
 function loadSession() {
@@ -145,6 +378,24 @@ function getEmployeeName(employeeId) {
   return state.db.employees.find((employee) => employee.id === employeeId)?.fullName || 'Unknown Employee';
 }
 
+function getCurrentEmployee() {
+  if (!state.session) return null;
+  if (state.session.employeeId) {
+    const byId = state.db.employees.find((employee) => employee.id === state.session.employeeId);
+    if (byId) return byId;
+  }
+
+  return state.db.employees.find((employee) => String(employee.email || '').toLowerCase() === String(state.session.email || '').toLowerCase()) || null;
+}
+
+function isStaffSession() {
+  return state.session?.role === 'staff';
+}
+
+function getCurrentEmployeeId() {
+  return getCurrentEmployee()?.id || state.session?.employeeId || null;
+}
+
 function getLatestEmployeeId() {
   const last = state.db.employees[state.db.employees.length - 1];
   if (!last) return 'EMP-1001';
@@ -155,6 +406,96 @@ function getLatestEmployeeId() {
 function getTodayAttendance() {
   const today = todayISO(0);
   return state.db.attendance.filter((entry) => entry.date === today);
+}
+
+function getCurrentEmployeeAttendance() {
+  const employeeId = getCurrentEmployeeId();
+  if (!employeeId) return [];
+  return state.db.attendance.filter((entry) => entry.employeeId === employeeId);
+}
+
+function getCurrentEmployeeTasks() {
+  const employeeId = getCurrentEmployeeId();
+  if (!employeeId) return [];
+  return state.db.tasks.filter((task) => task.employeeId === employeeId);
+}
+
+function getCurrentEmployeeReports() {
+  const employeeId = getCurrentEmployeeId();
+  if (!employeeId) return [];
+  return state.db.reports.filter((report) => report.employeeId === employeeId);
+}
+
+function getCurrentEmployeeDailyAttendance() {
+  const employeeId = getCurrentEmployeeId();
+  if (!employeeId) return [];
+  return [...state.db.attendance]
+    .filter((entry) => entry.employeeId === employeeId)
+    .sort((left, right) => new Date(right.date) - new Date(left.date))
+    .slice(0, 7);
+}
+
+function getMonthlyReportCounts(employeeId) {
+  const results = [];
+  for (let offset = 5; offset >= 0; offset -= 1) {
+    const date = new Date();
+    date.setMonth(date.getMonth() - offset, 1);
+    const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    const monthLabel = date.toLocaleDateString('en-NG', { month: 'short', year: 'numeric' });
+    const count = state.db.reports.filter((report) => report.employeeId === employeeId && String(report.submittedAt || '').startsWith(monthKey)).length;
+    results.push({ month: monthLabel, count });
+  }
+  return results;
+}
+
+function getStaffPresenceToday() {
+  const today = todayISO(0);
+  return state.db.employees
+    .filter((employee) => employee.id !== getCurrentEmployeeId())
+    .map((employee) => {
+      const attendance = state.db.attendance.find((entry) => entry.employeeId === employee.id && entry.date === today);
+      return {
+        employee,
+        present: attendance?.status === 'Present',
+        status: attendance?.status || 'Absent'
+      };
+    });
+}
+
+function getCurrentWeekStartISO() {
+  const now = new Date();
+  const day = now.getDay();
+  const diff = (day + 6) % 7;
+  now.setDate(now.getDate() - diff);
+  now.setHours(0, 0, 0, 0);
+  return now.toISOString();
+}
+
+function hasSubmittedCurrentWeekReport() {
+  const employeeId = getCurrentEmployeeId();
+  if (!employeeId) return false;
+  const weekStart = new Date(getCurrentWeekStartISO());
+  return state.db.reports.some((report) => report.employeeId === employeeId && new Date(report.submittedAt) >= weekStart);
+}
+
+function getCurrentMonthReportCount() {
+  const employeeId = getCurrentEmployeeId();
+  if (!employeeId) return 0;
+  const monthKey = todayISO(0).slice(0, 7);
+  return state.db.reports.filter((report) => report.employeeId === employeeId && String(report.submittedAt || '').startsWith(monthKey)).length;
+}
+
+function getAttendanceLockState() {
+  return Boolean(state.db.settings?.attendanceLocked);
+}
+
+function setAttendanceLockState(locked) {
+  state.db.settings = {
+    ...state.db.settings,
+    attendanceLocked: Boolean(locked),
+    attendanceLockedAt: new Date().toISOString(),
+    attendanceLockedBy: state.session?.email || state.session?.name || 'admin'
+  };
 }
 
 function getPayrollAdjustmentSummary(employeeId) {
@@ -184,12 +525,18 @@ function isLate(entry) {
 
 function isLateReport(report) {
   const submittedAt = new Date(report.submittedAt);
-  const saturday = new Date(submittedAt);
-  const day = saturday.getDay();
-  const diffToSaturday = (6 - day + 7) % 7;
-  saturday.setDate(saturday.getDate() - diffToSaturday);
-  saturday.setHours(10, 0, 0, 0);
-  return submittedAt > saturday;
+  const day = submittedAt.getDay();
+  const minutes = submittedAt.getHours() * 60 + submittedAt.getMinutes();
+
+  if (day === 5) {
+    return minutes < (12 * 60);
+  }
+
+  if (day === 6) {
+    return minutes > (10 * 60);
+  }
+
+  return true;
 }
 
 function getReportPenalty(report) {
@@ -258,6 +605,18 @@ function getOperationsActual() {
     + state.db.tasks.reduce((sum, task) => sum + getTaskPenalty(task), 0);
 
   return totalExpense + penalties;
+}
+
+function getStaffDeductionRows(employeeId) {
+  const summary = getEmployeeDeductions(employeeId);
+  return [
+    { label: 'Attendance penalty', purpose: 'Late arrival or absence', amount: summary.attendancePenalty },
+    { label: 'Report penalty', purpose: 'Weekly report submitted late', amount: summary.reportPenalty },
+    { label: 'Task penalty', purpose: 'Incomplete or overdue task', amount: summary.taskPenalty },
+    { label: 'Loan deduction', purpose: 'Loan collected from salary', amount: summary.loan },
+    { label: 'Advance deduction', purpose: 'Salary advance collected from salary', amount: summary.advance },
+    { label: 'Bonus adjustment', purpose: 'Added to salary before deductions', amount: summary.bonus }
+  ];
 }
 
 function isSalaryCategory(category) {
@@ -456,27 +815,34 @@ function chartOptions(type) {
 
 function renderEmployees() {
   const query = dom.employeeSearch.value.trim().toLowerCase();
+  const payrollPeriodKey = getCurrentPayrollPeriodKey();
+  const payrollPeriodLabel = getPayrollPeriodLabel(payrollPeriodKey);
   const rows = state.db.employees.filter((employee) => {
-    return [employee.id, employee.fullName, employee.position, employee.department]
+      return [employee.id, employee.fullName, employee.email, employee.position, employee.department]
       .some((field) => String(field).toLowerCase().includes(query));
   }).map((employee) => {
     const payroll = getEmployeeDeductions(employee.id);
+    const payrollPayment = getPayrollPayment(employee.id, payrollPeriodKey);
     return `
       <tr>
         <td><strong>${employee.id}</strong></td>
         <td>${employee.fullName}</td>
+        <td>${employee.email || '—'}</td>
+        <td>${employee.username || '—'}</td>
         <td>${employee.position}</td>
         <td>${employee.department}</td>
+        <td>${payrollPayment?.paid ? `<span class="chip chip-success">Paid ${payrollPeriodLabel}</span>` : `<span class="chip chip-danger">Pending ${payrollPeriodLabel}</span>`}</td>
         <td class="text-end">${formatCurrency(employee.salary)}</td>
         <td>
           <button class="btn btn-sm btn-soft me-1" data-action="edit-employee" data-id="${employee.id}">Edit</button>
           <button class="btn btn-sm btn-outline-secondary" data-action="delete-employee" data-id="${employee.id}">Delete</button>
+          <button class="btn btn-sm btn-outline-secondary mt-1" data-action="show-employee-credentials" data-id="${employee.id}">Credentials</button>
           <div class="small text-muted mt-2">Net salary: ${formatCurrency(payroll.finalSalary)}</div>
         </td>
       </tr>`;
   }).join('');
 
-  dom.employeeTableBody.innerHTML = rows || '<tr><td colspan="6" class="text-center text-muted py-4">No employees found</td></tr>';
+  dom.employeeTableBody.innerHTML = rows || '<tr><td colspan="9" class="text-center text-muted py-4">No employees found</td></tr>';
   buildSelectOptions();
 }
 
@@ -505,6 +871,13 @@ function renderAttendance() {
     }).join('');
 
   dom.attendanceTableBody.innerHTML = rows || '<tr><td colspan="8" class="text-center text-muted py-4">No attendance logs found</td></tr>';
+  if (dom.attendanceLockStatus) {
+    dom.attendanceLockStatus.textContent = getAttendanceLockState() ? 'Locked' : 'Open';
+    dom.attendanceLockStatus.className = `badge rounded-pill ${getAttendanceLockState() ? 'text-bg-danger' : 'text-bg-success'} px-3 py-2`;
+  }
+  if (dom.attendanceLockBtn) {
+    dom.attendanceLockBtn.textContent = getAttendanceLockState() ? 'Unlock Attendance' : 'Lock Attendance';
+  }
 }
 
 function renderTasks() {
@@ -560,7 +933,10 @@ function renderReports() {
           </td>
           <td>${late ? '<span class="chip chip-danger">Late</span>' : '<span class="chip chip-success">On time</span>'}</td>
           <td class="text-end fw-bold">${formatCurrency(penalty)}</td>
-          <td><button class="btn btn-sm btn-outline-secondary" data-action="delete-report" data-id="${report.id}">Delete</button></td>
+          <td>
+            <button class="btn btn-sm btn-soft me-1" data-action="edit-report" data-id="${report.id}">Edit</button>
+            <button class="btn btn-sm btn-outline-secondary" data-action="delete-report" data-id="${report.id}">Delete</button>
+          </td>
         </tr>`;
     }).join('');
 
@@ -622,6 +998,9 @@ function getPayrollAdjustmentTotals() {
 
 function renderPayrollAdjustments() {
   const query = dom.payrollAdjustmentSearch.value.trim().toLowerCase();
+  const payrollPeriodKey = getSelectedPayrollPeriodKey();
+  const payrollPeriodLabel = getPayrollPeriodLabel(payrollPeriodKey);
+  populatePayrollPeriodFilter();
   const rows = [...state.db.payrollAdjustments]
     .sort((left, right) => new Date(right.date) - new Date(left.date))
     .filter((entry) => {
@@ -647,21 +1026,31 @@ function renderPayrollAdjustments() {
   dom.payrollAdvancesMetric.textContent = formatCurrency(totals.advance);
   dom.payrollBonusesMetric.textContent = formatCurrency(totals.bonus);
   dom.payrollNetMetric.textContent = formatCurrency(getPayrollTotals().net);
+  if (dom.payrollPeriodLabel) dom.payrollPeriodLabel.textContent = payrollPeriodLabel;
+  if (dom.payrollPeriodFilter && !dom.payrollPeriodFilter.value) dom.payrollPeriodFilter.value = payrollPeriodKey;
 
   const summaryRows = state.db.employees.map((employee) => {
     const summary = getEmployeeDeductions(employee.id);
+    const payment = getPayrollPayment(employee.id, payrollPeriodKey);
     return `
       <tr>
         <td>${employee.fullName}</td>
+        <td>${payrollPeriodLabel}</td>
         <td class="text-end">${formatCurrency(summary.originalSalary)}</td>
         <td class="text-end">${formatCurrency(summary.bonus)}</td>
         <td class="text-end">${formatCurrency(summary.loanAndAdvance)}</td>
         <td class="text-end">${formatCurrency(summary.otherDeductions)}</td>
         <td class="text-end fw-bold">${formatCurrency(summary.finalSalary)}</td>
+        <td>${payment?.paid ? `<span class="chip chip-success">Paid</span><div class="small text-muted mt-1">${formatDate(payment.paidAt)}</div>` : '<span class="chip chip-danger">Pending</span>'}</td>
+        <td>
+          <button class="btn btn-sm ${payment?.paid ? 'btn-soft' : 'btn-primary'}" data-action="toggle-payroll-payment" data-employee-id="${employee.id}" data-period-key="${payrollPeriodKey}" data-paid="${payment?.paid ? 'true' : 'false'}">
+            ${payment?.paid ? `Mark ${payrollPeriodLabel} Unpaid` : `Mark ${payrollPeriodLabel} Paid`}
+          </button>
+        </td>
       </tr>`;
   }).join('');
 
-  dom.payrollSummaryTableBody.innerHTML = summaryRows || '<tr><td colspan="6" class="text-center text-muted py-4">No employees found</td></tr>';
+  dom.payrollSummaryTableBody.innerHTML = summaryRows || '<tr><td colspan="9" class="text-center text-muted py-4">No employees found</td></tr>';
 }
 
 function renderBudget() {
@@ -694,6 +1083,115 @@ function renderBudget() {
   dom.budgetAlerts.innerHTML = alerts.map((message) => `<div class="alert-item">${message}</div>`).join('');
 }
 
+function renderStaffPortal() {
+  const employee = getCurrentEmployee();
+  const payrollPeriodKey = getSelectedPayrollPeriodKey();
+  const payrollPeriodLabel = getPayrollPeriodLabel(payrollPeriodKey);
+  if (!employee) {
+    dom.staffPortalStatus.textContent = 'No employee profile is linked to this account yet.';
+    dom.staffTasksBody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">No linked employee profile found</td></tr>';
+    dom.staffReportsSummary.textContent = 'Unavailable';
+    dom.staffReportsDetail.textContent = 'Weekly report status unavailable until an employee profile is linked.';
+    dom.staffAttendanceSummary.textContent = 'Unavailable';
+    dom.staffAttendanceDetail.textContent = 'Attendance actions are unavailable until an employee profile is linked.';
+    dom.staffDeductionsBody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-4">No linked employee profile found</td></tr>';
+    dom.staffDailyAttendanceBody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">No attendance history available</td></tr>';
+    dom.staffMonthlyReportsBody.innerHTML = '<tr><td colspan="2" class="text-center text-muted py-4">No report history available</td></tr>';
+    dom.staffColleaguesBody.innerHTML = '<tr><td colspan="2" class="text-center text-muted py-4">No staff records available</td></tr>';
+    dom.staffSalaryValue.textContent = formatCurrency(0);
+    dom.staffActualSalaryValue.textContent = formatCurrency(0);
+    if (dom.staffSalaryPeriodLabel) dom.staffSalaryPeriodLabel.textContent = payrollPeriodLabel;
+    dom.staffSalaryStatus.textContent = 'Unavailable';
+    dom.staffSalaryStatus.className = 'badge rounded-pill text-bg-secondary px-3 py-2';
+    return;
+  }
+
+  const payroll = getEmployeeDeductions(employee.id);
+  const payrollPayment = getPayrollPayment(employee.id, payrollPeriodKey);
+  const tasks = getCurrentEmployeeTasks();
+  const reports = getCurrentEmployeeReports();
+  const attendance = getCurrentEmployeeAttendance();
+  const dailyAttendance = getCurrentEmployeeDailyAttendance();
+  const monthlyReports = getMonthlyReportCounts(employee.id);
+  const colleagues = getStaffPresenceToday();
+  const latestAttendance = attendance.slice().sort((left, right) => new Date(right.date) - new Date(left.date))[0] || null;
+
+  dom.staffPortalStatus.textContent = `${employee.fullName} · ${employee.position} · ${employee.department}`;
+  dom.staffAttendanceSummary.textContent = latestAttendance ? formatDate(latestAttendance.date) : 'No logs';
+  dom.staffAttendanceDetail.textContent = latestAttendance
+    ? `Last attendance: ${formatDate(latestAttendance.date)} (${latestAttendance.status}${latestAttendance.timeIn ? `, in ${latestAttendance.timeIn}` : ''}${latestAttendance.timeOut ? `, out ${latestAttendance.timeOut}` : ''})`
+    : 'No attendance record has been logged yet.';
+  dom.staffReportsSummary.textContent = `${getCurrentMonthReportCount()} this month`;
+  dom.staffReportsDetail.textContent = hasSubmittedCurrentWeekReport()
+    ? 'Weekly report submitted for the current month.'
+    : 'Weekly report not yet submitted for the current month.';
+  dom.staffSalaryValue.textContent = formatCurrency(payroll.finalSalary);
+  dom.staffActualSalaryValue.textContent = formatCurrency(payroll.originalSalary);
+  if (dom.staffSalaryPeriodLabel) dom.staffSalaryPeriodLabel.textContent = payrollPeriodLabel;
+  dom.staffSalaryStatus.textContent = payrollPayment?.paid
+    ? `Paid for ${payrollPeriodLabel}${payrollPayment.paidAt ? ` on ${formatDate(payrollPayment.paidAt)}` : ''}`
+    : `Pending for ${payrollPeriodLabel}`;
+  dom.staffSalaryStatus.className = `badge rounded-pill px-3 py-2 ${payrollPayment?.paid ? 'text-bg-success' : 'text-bg-danger'}`;
+
+  dom.staffTasksBody.innerHTML = tasks.length
+    ? tasks.map((task) => `
+      <tr>
+        <td>
+          <div class="fw-semibold">${task.title}</div>
+          <div class="small text-muted">${task.description || '—'}</div>
+        </td>
+        <td>${formatDate(task.deadline)}</td>
+        <td class="text-end"><span class="chip ${Number(task.completion) === 100 ? 'chip-success' : 'chip-warning'}">${Number(task.completion)}%</span></td>
+        <td>${Number(task.completion) === 100 ? '<span class="chip chip-success">Complete</span>' : '<span class="chip chip-warning">In progress</span>'}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="4" class="text-center text-muted py-4">No tasks assigned</td></tr>';
+
+  dom.staffReportsBody.innerHTML = reports.length
+    ? reports.map((report) => `
+      <tr>
+        <td>${formatDateTime(report.submittedAt)}</td>
+        <td>${report.title}</td>
+        <td>${report.content.slice(0, 80)}${report.content.length > 80 ? '...' : ''}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="3" class="text-center text-muted py-4">No weekly reports submitted</td></tr>';
+
+  const staffDeductionRows = getStaffDeductionRows(employee.id).filter((item) => item.amount > 0 || item.label === 'Bonus adjustment');
+  dom.staffDeductionsBody.innerHTML = staffDeductionRows.length
+    ? staffDeductionRows.map((item) => `
+      <tr>
+        <td>${item.label}</td>
+        <td>${item.purpose}</td>
+        <td class="text-end fw-bold">${formatCurrency(item.amount)}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="3" class="text-center text-muted py-4">No deductions recorded</td></tr>';
+
+  dom.staffDailyAttendanceBody.innerHTML = dailyAttendance.length
+    ? dailyAttendance.map((entry) => `
+      <tr>
+        <td>${formatDate(entry.date)}</td>
+        <td>${entry.timeIn || '—'}</td>
+        <td>${entry.timeOut || '—'}</td>
+        <td><span class="chip ${entry.status === 'Present' ? 'chip-success' : 'chip-danger'}">${entry.status}</span></td>
+      </tr>`).join('')
+    : '<tr><td colspan="4" class="text-center text-muted py-4">No attendance history available</td></tr>';
+
+  dom.staffMonthlyReportsBody.innerHTML = monthlyReports.length
+    ? monthlyReports.map((entry) => `
+      <tr>
+        <td>${entry.month}</td>
+        <td class="text-end fw-bold">${entry.count}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="2" class="text-center text-muted py-4">No report history available</td></tr>';
+
+  dom.staffColleaguesBody.innerHTML = colleagues.length
+    ? colleagues.map((entry) => `
+      <tr>
+        <td>${entry.employee.fullName}</td>
+        <td><span class="chip ${entry.present ? 'chip-success' : 'chip-danger'}">${entry.present ? 'Present' : 'Absent'}</span></td>
+      </tr>`).join('')
+    : '<tr><td colspan="2" class="text-center text-muted py-4">No staff records available</td></tr>';
+}
+
 function renderDerivedViews() {
   renderAttendance();
   renderTasks();
@@ -702,13 +1200,45 @@ function renderDerivedViews() {
   renderPayrollAdjustments();
   renderBudget();
   renderDashboard();
+  renderStaffPortal();
+}
+
+function configureRoleUi() {
+  const staffMode = isStaffSession();
+  const adminOnlyViews = ['dashboardView', 'employeesView', 'attendanceView', 'tasksView', 'reportsView', 'financeView', 'payrollView', 'budgetView'];
+  const staffViews = ['staffView'];
+
+  document.querySelectorAll('#sidebarNav [data-view]').forEach((button) => {
+    const isStaffButton = button.dataset.view === 'staffView';
+    button.classList.toggle('d-none', staffMode ? !isStaffButton : isStaffButton);
+  });
+
+  adminOnlyViews.forEach((viewId) => {
+    const panel = document.getElementById(viewId);
+    if (panel) panel.classList.toggle('d-none', staffMode);
+  });
+
+  staffViews.forEach((viewId) => {
+    const panel = document.getElementById(viewId);
+    if (panel) panel.classList.toggle('d-none', !staffMode);
+  });
+
+  if (staffMode) {
+    dom.pageTitle.textContent = 'Staff Portal';
+    setActiveView('staffView');
+  }
 }
 
 function resetEmployeeForm() {
   dom.employeeForm.reset();
   dom.employeeId.value = '';
+  dom.employeeEmail.value = '';
   dom.employeeFormTitle.textContent = 'Add Employee';
   dom.employeeSubmitBtn.textContent = 'Save Employee';
+  if (dom.employeeCredentialBox) {
+    dom.employeeCredentialBox.classList.add('d-none');
+    dom.employeeCredentialBox.textContent = '';
+  }
 }
 
 function resetTaskForm() {
@@ -718,27 +1248,51 @@ function resetTaskForm() {
   dom.taskFormTitle.textContent = 'Assign Task';
 }
 
-function upsertEmployee(event) {
+async function upsertEmployee(event) {
   event.preventDefault();
   const id = dom.employeeId.value || getLatestEmployeeId();
+  const existingEmployee = state.db.employees.find((item) => item.id === id) || null;
+  const email = dom.employeeEmail.value.trim().toLowerCase() || existingEmployee?.email || buildEmployeeEmail(dom.employeeName.value.trim(), id);
+  const credentials = buildEmployeeCredentials({
+    id,
+    fullName: dom.employeeName.value.trim(),
+    email
+  });
   const employee = {
     id,
     fullName: dom.employeeName.value.trim(),
+    email,
+    username: credentials.username,
     position: dom.employeePosition.value.trim(),
     department: dom.employeeDepartment.value.trim(),
     salary: Number(dom.employeeSalary.value)
   };
 
+  const userRecord = {
+    name: employee.fullName,
+    username: employee.email,
+    email: employee.email,
+    role: 'staff',
+    employeeId: employee.id,
+    passwordHash: await hashPassword(employee.id)
+  };
+
   if (dom.employeeId.value) {
     state.db.employees = state.db.employees.map((item) => item.id === id ? employee : item);
+    state.db.users = state.db.users.map((item) => item.employeeId === id ? { ...item, ...userRecord } : item);
     showToast('Employee updated successfully.', 'success');
   } else {
     state.db.employees.push({ ...employee, createdAt: new Date().toISOString() });
+    state.db.users.push(userRecord);
     showToast('Employee added successfully.', 'success');
   }
 
   saveDatabase();
   resetEmployeeForm();
+  if (dom.employeeCredentialBox) {
+    dom.employeeCredentialBox.classList.remove('d-none');
+    dom.employeeCredentialBox.innerHTML = `Login created. Username: <strong>${credentials.username}</strong>. Password: <strong>${credentials.password}</strong>.`;
+  }
   refreshAll();
 }
 
@@ -796,18 +1350,50 @@ function upsertTask(event) {
   refreshAll();
 }
 
+function resetReportForm() {
+  if (dom.reportForm) dom.reportForm.reset();
+  if (dom.staffReportForm) dom.staffReportForm.reset();
+  if (dom.reportId) dom.reportId.value = '';
+  if (dom.reportFormTitle) dom.reportFormTitle.textContent = 'Weekly Report Submission';
+  if (dom.reportSubmitBtn) dom.reportSubmitBtn.textContent = 'Submit Report';
+  if (dom.staffReportSubmitBtn) dom.staffReportSubmitBtn.textContent = 'Submit Report';
+}
+
 function submitReport(event) {
   event.preventDefault();
-  state.db.reports.push({
-    id: crypto.randomUUID(),
-    employeeId: dom.reportEmployee.value,
-    title: dom.reportTitle.value.trim(),
-    content: dom.reportContent.value.trim(),
-    submittedAt: new Date().toISOString()
-  });
+  const isStaffForm = event.currentTarget.id === 'staffReportForm';
+  const reportId = isStaffForm ? crypto.randomUUID() : (dom.reportId.value || crypto.randomUUID());
+  const employeeId = isStaffForm ? getCurrentEmployeeId() : dom.reportEmployee.value;
+  const title = isStaffForm ? dom.staffReportTitle.value.trim() : dom.reportTitle.value.trim();
+  const content = isStaffForm ? dom.staffReportContent.value.trim() : dom.reportContent.value.trim();
+  const existingIndex = state.db.reports.findIndex((item) => item.id === reportId);
+  const existing = existingIndex >= 0 ? state.db.reports[existingIndex] : null;
+
+  if (!employeeId) {
+    showToast('No staff profile is linked to this account.', 'danger');
+    return;
+  }
+
+  const report = {
+    id: reportId,
+    employeeId,
+    title,
+    content,
+    submittedAt: existing?.submittedAt || new Date().toISOString(),
+    updatedAt: existing ? new Date().toISOString() : null,
+    updatedBy: state.session?.email || state.session?.name || null
+  };
+
+  if (existingIndex >= 0) {
+    state.db.reports[existingIndex] = { ...state.db.reports[existingIndex], ...report };
+    showToast('Report updated.', 'success');
+  } else {
+    state.db.reports.push(report);
+    showToast('Report submitted.', 'success');
+  }
+
   saveDatabase();
-  dom.reportForm.reset();
-  showToast('Report submitted.', 'success');
+  resetReportForm();
   refreshAll();
 }
 
@@ -860,6 +1446,50 @@ function submitPayrollAdjustment(event) {
   refreshAll();
 }
 
+function submitStaffAttendance(action) {
+  const employee = getCurrentEmployee();
+  if (!employee) {
+    showToast('No staff profile is linked to this account.', 'danger');
+    return;
+  }
+
+  if (action === 'check-in' && getAttendanceLockState()) {
+    showToast('attendace Locked you are late', 'danger');
+    return;
+  }
+
+  const today = todayISO(0);
+  const now = new Date().toTimeString().slice(0, 5);
+  const existingIndex = state.db.attendance.findIndex((item) => item.employeeId === employee.id && item.date === today);
+
+  if (existingIndex >= 0) {
+    const existing = state.db.attendance[existingIndex];
+    state.db.attendance[existingIndex] = {
+      ...existing,
+      employeeId: employee.id,
+      date: today,
+      status: 'Present',
+      permission: existing.permission || false,
+      timeIn: action === 'check-in' ? (existing.timeIn || now) : existing.timeIn,
+      timeOut: action === 'check-out' ? now : existing.timeOut
+    };
+  } else {
+    state.db.attendance.push({
+      id: crypto.randomUUID(),
+      employeeId: employee.id,
+      date: today,
+      status: 'Present',
+      permission: false,
+      timeIn: action === 'check-in' ? now : '',
+      timeOut: action === 'check-out' ? now : ''
+    });
+  }
+
+  saveDatabase();
+  showToast(action === 'check-in' ? 'Check-in recorded.' : 'Check-out recorded.', 'success');
+  refreshAll();
+}
+
 function resetPayrollAdjustmentForm() {
   dom.payrollAdjustmentForm.reset();
   dom.payrollAdjustmentId.value = '';
@@ -878,6 +1508,13 @@ function submitBudget(event) {
   refreshAll();
 }
 
+function toggleAttendanceLock() {
+  setAttendanceLockState(!getAttendanceLockState());
+  saveDatabase();
+  showToast(getAttendanceLockState() ? 'Attendance locked.' : 'Attendance unlocked.', 'success');
+  refreshAll();
+}
+
 function handleTableActions(event) {
   const button = event.target.closest('[data-action]');
   if (!button) return;
@@ -888,6 +1525,7 @@ function handleTableActions(event) {
     if (!employee) return;
     dom.employeeId.value = employee.id;
     dom.employeeName.value = employee.fullName;
+    dom.employeeEmail.value = employee.email || '';
     dom.employeePosition.value = employee.position;
     dom.employeeDepartment.value = employee.department;
     dom.employeeSalary.value = employee.salary;
@@ -896,12 +1534,23 @@ function handleTableActions(event) {
     setActiveView('employeesView');
   }
 
+  if (action === 'show-employee-credentials') {
+    const employee = state.db.employees.find((item) => item.id === id);
+    if (!employee) return;
+    const linkedUser = state.db.users.find((item) => item.employeeId === employee.id);
+    if (!linkedUser) return;
+    dom.employeeCredentialBox.classList.remove('d-none');
+    dom.employeeCredentialBox.innerHTML = `Username: <strong>${linkedUser.username || '—'}</strong> | Password: <strong>${employee.id}</strong>`;
+    return;
+  }
+
   if (action === 'delete-employee') {
     if (!confirm('Delete this employee and related records?')) return;
     state.db.employees = state.db.employees.filter((item) => item.id !== id);
     state.db.attendance = state.db.attendance.filter((item) => item.employeeId !== id);
     state.db.tasks = state.db.tasks.filter((item) => item.employeeId !== id);
     state.db.reports = state.db.reports.filter((item) => item.employeeId !== id);
+    state.db.payrollPayments = state.db.payrollPayments.filter((item) => item.employeeId !== id);
     saveDatabase();
     showToast('Employee deleted.', 'success');
     refreshAll();
@@ -941,6 +1590,18 @@ function handleTableActions(event) {
     refreshAll();
   }
 
+  if (action === 'edit-report') {
+    const report = state.db.reports.find((item) => item.id === id);
+    if (!report || !dom.reportForm || !dom.reportId) return;
+    dom.reportId.value = report.id;
+    dom.reportEmployee.value = report.employeeId;
+    dom.reportTitle.value = report.title;
+    dom.reportContent.value = report.content;
+    if (dom.reportFormTitle) dom.reportFormTitle.textContent = 'Edit Weekly Report';
+    if (dom.reportSubmitBtn) dom.reportSubmitBtn.textContent = 'Update Report';
+    setActiveView('reportsView');
+  }
+
   if (action === 'delete-income') {
     if (!confirm('Delete this finance entry?')) return;
     state.db.income = state.db.income.filter((item) => item.id !== id);
@@ -970,6 +1631,16 @@ function handleTableActions(event) {
     showToast('Payroll adjustment removed.', 'success');
     refreshAll();
   }
+
+  if (action === 'toggle-payroll-payment') {
+    const employeeId = button.dataset.employeeId;
+    const periodKey = button.dataset.periodKey || getCurrentPayrollPeriodKey();
+    const paid = button.dataset.paid === 'true';
+    setPayrollPayment(employeeId, periodKey, !paid);
+    saveDatabase();
+    showToast(`${getPayrollPeriodLabel(periodKey)} salary ${!paid ? 'marked paid.' : 'marked unpaid.'}`, 'success');
+    refreshAll();
+  }
 }
 
 function refreshAll() {
@@ -981,19 +1652,24 @@ function refreshAll() {
   renderPayrollAdjustments();
   renderBudget();
   renderDashboard();
+  renderStaffPortal();
 }
 
 async function handleLogin(event) {
   event.preventDefault();
-  const email = dom.email.value.trim().toLowerCase();
+  const loginValue = dom.email.value.trim().toLowerCase();
   const passwordHash = await hashPassword(dom.password.value);
-  const user = state.db.users.find((item) => item.email.toLowerCase() === email && item.passwordHash === passwordHash);
+  const user = state.db.users.find((item) => {
+    const emailMatch = String(item.email || '').toLowerCase() === loginValue;
+    const usernameMatch = String(item.username || '').toLowerCase() === loginValue;
+    return (emailMatch || usernameMatch) && item.passwordHash === passwordHash;
+  });
   if (!user) {
     showToast('Invalid credentials.', 'danger');
     return;
   }
 
-  saveSession({ email: user.email, role: user.role, name: user.name });
+  saveSession({ email: user.email, role: user.role, name: user.name, employeeId: user.employeeId || null });
   bootApp();
   showToast(`Welcome, ${user.name}.`, 'success');
 }
@@ -1016,7 +1692,10 @@ function bootApp() {
   dom.payrollAdjustmentId.value = '';
   dom.payrollAdjustmentFormTitle.textContent = 'Payroll Adjustments';
   dom.payrollAdjustmentSubmitBtn.textContent = 'Save Adjustment';
+  populatePayrollPeriodFilter();
+  resetReportForm();
   dom.taskDeadline.value = todayISO(7);
+  configureRoleUi();
   refreshAll();
 }
 
@@ -1042,20 +1721,21 @@ function cacheDom() {
     liveClock: 'liveClock', sessionUserName: 'sessionUserName', sessionUserRole: 'sessionUserRole', pageTitle: 'pageTitle',
     totalEmployeesCard: 'totalEmployeesCard', presentTodayCard: 'presentTodayCard', absentTodayCard: 'absentTodayCard',
     totalDeductionsCard: 'totalDeductionsCard', netSalaryCard: 'netSalaryCard', employeeForm: 'employeeForm', employeeId: 'employeeId',
-    employeeName: 'employeeName', employeePosition: 'employeePosition', employeeDepartment: 'employeeDepartment', employeeSalary: 'employeeSalary',
+    employeeName: 'employeeName', employeeEmail: 'employeeEmail', employeePosition: 'employeePosition', employeeDepartment: 'employeeDepartment', employeeSalary: 'employeeSalary',
     employeeFormTitle: 'employeeFormTitle', employeeSubmitBtn: 'employeeSubmitBtn', employeeResetBtn: 'employeeResetBtn',
     employeeSearch: 'employeeSearch', employeeTableBody: 'employeeTableBody', attendanceForm: 'attendanceForm', attendanceEmployee: 'attendanceEmployee',
     attendanceDate: 'attendanceDate', attendanceStatus: 'attendanceStatus', attendancePermission: 'attendancePermission', attendanceTimeIn: 'attendanceTimeIn',
     attendanceTimeOut: 'attendanceTimeOut', attendanceSearch: 'attendanceSearch', attendanceTableBody: 'attendanceTableBody', taskForm: 'taskForm',
     taskId: 'taskId', taskEmployee: 'taskEmployee', taskTitle: 'taskTitle', taskDescription: 'taskDescription', taskDeadline: 'taskDeadline',
     taskProgress: 'taskProgress', taskFormTitle: 'taskFormTitle', taskSearch: 'taskSearch', taskTableBody: 'taskTableBody', taskResetBtn: 'taskResetBtn',
-    reportForm: 'reportForm', reportEmployee: 'reportEmployee', reportTitle: 'reportTitle', reportContent: 'reportContent', reportSearch: 'reportSearch',
+    reportForm: 'reportForm', reportFormTitle: 'reportFormTitle', reportSubmitBtn: 'reportSubmitBtn', reportId: 'reportId', reportEmployee: 'reportEmployee', reportTitle: 'reportTitle', reportContent: 'reportContent', reportSearch: 'reportSearch', staffReportForm: 'staffReportForm', staffReportTitle: 'staffReportTitle', staffReportContent: 'staffReportContent', staffReportSubmitBtn: 'staffReportSubmitBtn',
     reportTableBody: 'reportTableBody', incomeForm: 'incomeForm', incomeType: 'incomeType', incomeCategory: 'incomeCategory', incomeAmount: 'incomeAmount',
     incomeDate: 'incomeDate', incomeDescription: 'incomeDescription', incomeTableBody: 'incomeTableBody', revenueMetric: 'revenueMetric', expensesMetric: 'expensesMetric',
     profitMetric: 'profitMetric', financeRangeFilter: 'financeRangeFilter',
-    payrollAdjustmentForm: 'payrollAdjustmentForm', payrollAdjustmentId: 'payrollAdjustmentId', payrollAdjustmentFormTitle: 'payrollAdjustmentFormTitle', payrollAdjustmentSubmitBtn: 'payrollAdjustmentSubmitBtn', payrollAdjustmentEmployee: 'payrollAdjustmentEmployee', payrollAdjustmentType: 'payrollAdjustmentType', payrollAdjustmentAmount: 'payrollAdjustmentAmount', payrollAdjustmentDate: 'payrollAdjustmentDate', payrollAdjustmentNotes: 'payrollAdjustmentNotes', payrollAdjustmentResetBtn: 'payrollAdjustmentResetBtn', payrollAdjustmentSearch: 'payrollAdjustmentSearch', payrollAdjustmentTableBody: 'payrollAdjustmentTableBody', payrollLoansMetric: 'payrollLoansMetric', payrollAdvancesMetric: 'payrollAdvancesMetric', payrollBonusesMetric: 'payrollBonusesMetric', payrollNetMetric: 'payrollNetMetric', payrollSummaryTableBody: 'payrollSummaryTableBody', budgetForm: 'budgetForm', salaryBudget: 'salaryBudget',
+    payrollAdjustmentForm: 'payrollAdjustmentForm', payrollAdjustmentId: 'payrollAdjustmentId', payrollAdjustmentFormTitle: 'payrollAdjustmentFormTitle', payrollAdjustmentSubmitBtn: 'payrollAdjustmentSubmitBtn', payrollAdjustmentEmployee: 'payrollAdjustmentEmployee', payrollAdjustmentType: 'payrollAdjustmentType', payrollAdjustmentAmount: 'payrollAdjustmentAmount', payrollAdjustmentDate: 'payrollAdjustmentDate', payrollAdjustmentNotes: 'payrollAdjustmentNotes', payrollAdjustmentResetBtn: 'payrollAdjustmentResetBtn', payrollAdjustmentSearch: 'payrollAdjustmentSearch', payrollAdjustmentTableBody: 'payrollAdjustmentTableBody', payrollLoansMetric: 'payrollLoansMetric', payrollAdvancesMetric: 'payrollAdvancesMetric', payrollBonusesMetric: 'payrollBonusesMetric', payrollNetMetric: 'payrollNetMetric', payrollPeriodFilter: 'payrollPeriodFilter', payrollPeriodLabel: 'payrollPeriodLabel', payrollSummaryTableBody: 'payrollSummaryTableBody', budgetForm: 'budgetForm', salaryBudget: 'salaryBudget',
     operationsBudget: 'operationsBudget', budgetSalaryValue: 'budgetSalaryValue', budgetOperationsValue: 'budgetOperationsValue', budgetSalaryActual: 'budgetSalaryActual',
     budgetOperationsActual: 'budgetOperationsActual', budgetSalaryStatus: 'budgetSalaryStatus', budgetOperationsStatus: 'budgetOperationsStatus', budgetAlerts: 'budgetAlerts',
+    staffPortalStatus: 'staffPortalStatus', staffAttendanceSummary: 'staffAttendanceSummary', staffAttendanceDetail: 'staffAttendanceDetail', staffReportsSummary: 'staffReportsSummary', staffReportsDetail: 'staffReportsDetail', staffSalaryValue: 'staffSalaryValue', staffActualSalaryValue: 'staffActualSalaryValue', staffSalaryPeriodLabel: 'staffSalaryPeriodLabel', staffSalaryStatus: 'staffSalaryStatus', staffTasksBody: 'staffTasksBody', staffReportsBody: 'staffReportsBody', staffDeductionsBody: 'staffDeductionsBody', staffDailyAttendanceBody: 'staffDailyAttendanceBody', staffMonthlyReportsBody: 'staffMonthlyReportsBody', staffColleaguesBody: 'staffColleaguesBody', staffCheckInBtn: 'staffCheckInBtn', staffCheckOutBtn: 'staffCheckOutBtn', attendanceLockStatus: 'attendanceLockStatus', attendanceLockBtn: 'attendanceLockBtn', employeeCredentialBox: 'employeeCredentialBox',
     toastContainer: 'toastContainer'
   };
 
@@ -1074,16 +1754,21 @@ function bindEvents() {
   dom.taskForm.addEventListener('submit', upsertTask);
   dom.taskResetBtn.addEventListener('click', resetTaskForm);
   dom.reportForm.addEventListener('submit', submitReport);
+  if (dom.staffReportForm) dom.staffReportForm.addEventListener('submit', submitReport);
   dom.incomeForm.addEventListener('submit', submitIncome);
   dom.payrollAdjustmentForm.addEventListener('submit', submitPayrollAdjustment);
   dom.payrollAdjustmentResetBtn.addEventListener('click', resetPayrollAdjustmentForm);
   dom.budgetForm.addEventListener('submit', submitBudget);
   dom.financeRangeFilter.addEventListener('change', renderFinance);
   dom.payrollAdjustmentSearch.addEventListener('input', renderPayrollAdjustments);
+  if (dom.payrollPeriodFilter) dom.payrollPeriodFilter.addEventListener('change', renderPayrollAdjustments);
   dom.employeeSearch.addEventListener('input', renderEmployees);
   dom.attendanceSearch.addEventListener('input', renderAttendance);
   dom.taskSearch.addEventListener('input', renderTasks);
   dom.reportSearch.addEventListener('input', renderReports);
+  if (dom.staffCheckInBtn) dom.staffCheckInBtn.addEventListener('click', () => submitStaffAttendance('check-in'));
+  if (dom.staffCheckOutBtn) dom.staffCheckOutBtn.addEventListener('click', () => submitStaffAttendance('check-out'));
+  if (dom.attendanceLockBtn) dom.attendanceLockBtn.addEventListener('click', toggleAttendanceLock);
   document.getElementById('sidebarNav').addEventListener('click', (event) => {
     const button = event.target.closest('[data-view]');
     if (!button) return;
@@ -1098,8 +1783,10 @@ async function init() {
   state.db = await loadDatabase();
   state.session = loadSession();
   bindEvents();
+  populatePayrollPeriodFilter();
 
   if (state.session) {
+    configureRoleUi();
     bootApp();
   } else {
     dom.authShell.classList.remove('d-none');

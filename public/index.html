@@ -19,19 +19,19 @@
         <span class="brand-mark"><i class="bi bi-building-fill"></i></span>
         <div>
           <div class="brand-name">HR Management Suite</div>
-          <small class="text-muted">Bootstrap + localStorage</small>
+          <small class="text-muted">Bootstrap + Firestore</small>
         </div>
       </div>
       <h1 class="auth-title">Sign in to the admin console</h1>
       <p class="auth-copy">Manage employees, attendance, deductions, tasks, reports, finance, and budgets from one dashboard.</p>
       <form id="loginForm" class="auth-form">
         <div class="mb-3">
-          <label class="form-label" for="email">Email</label>
-          <input class="form-control form-control-lg" id="email" name="email" type="email" placeholder="admin@hr.local" required>
+          <label class="form-label" for="email">Username or Email</label>
+          <input class="form-control form-control-lg" id="email" name="email" type="text" placeholder="username" required>
         </div>
         <div class="mb-3">
           <label class="form-label" for="password">Password</label>
-          <input class="form-control form-control-lg" id="password" name="password" type="password" placeholder="Admin@123" required>
+          <input class="form-control form-control-lg" id="password" name="password" type="password" placeholder="password" required>
         </div>
         <button class="btn btn-primary btn-lg w-100" type="submit">Sign In</button>
       </form>
@@ -49,6 +49,7 @@
       </div>
       <nav class="nav flex-column gap-2 mt-4" id="sidebarNav">
         <button class="nav-link active" data-view="dashboardView"><i class="bi bi-speedometer2"></i><span>Dashboard</span></button>
+        <button class="nav-link d-none" data-view="staffView"><i class="bi bi-person-badge"></i><span>Staff Portal</span></button>
         <button class="nav-link" data-view="employeesView"><i class="bi bi-people"></i><span>Employees</span></button>
         <button class="nav-link" data-view="attendanceView"><i class="bi bi-clock-history"></i><span>Attendance</span></button>
         <button class="nav-link" data-view="tasksView"><i class="bi bi-list-check"></i><span>Tasks</span></button>
@@ -135,6 +136,216 @@
           </div>
         </section>
 
+        <section class="view-panel d-none" id="staffView">
+          <div class="row g-4 mb-4">
+            <div class="col-12 col-md-4">
+              <div class="summary-card h-100"><span>Staff Member</span><strong id="staffPortalStatus">Loading...</strong></div>
+            </div>
+            <div class="col-12 col-md-4">
+              <div class="summary-card h-100"><span>Attendance</span><strong id="staffAttendanceSummary">Loading...</strong></div>
+            </div>
+            <div class="col-12 col-md-4">
+              <div class="summary-card h-100"><span>Reports This Month</span><strong id="staffReportsSummary">Loading...</strong></div>
+            </div>
+          </div>
+
+          <div class="row g-4 mb-4">
+            <div class="col-12 col-xl-4">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Attendance</h3>
+                    <p>Clock in and out for today only.</p>
+                  </div>
+                </div>
+                <div class="d-flex align-items-center justify-content-between gap-2 mb-3">
+                  <div class="small text-muted">Attendance lock status is controlled by admin.</div>
+                  <div class="d-flex align-items-center gap-2">
+                    <span class="badge rounded-pill text-bg-success px-3 py-2" id="attendanceLockStatus">Open</span>
+                  </div>
+                </div>
+                <div class="d-grid gap-2">
+                  <button class="btn btn-primary" type="button" id="staffCheckInBtn">Sign In</button>
+                  <button class="btn btn-outline-secondary" type="button" id="staffCheckOutBtn">Sign Out</button>
+                </div>
+                <div class="small text-muted mt-3" id="staffAttendanceDetail"></div>
+              </div>
+            </div>
+            <div class="col-12 col-xl-4">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Salary After Deduction</h3>
+                    <p>Net pay based on your records.</p>
+                  </div>
+                </div>
+                <div class="display-6 fw-bold" id="staffSalaryValue">NGN 0</div>
+                <div class="small text-muted mt-2">Actual salary: <strong id="staffActualSalaryValue">NGN 0</strong></div>
+                <div class="small text-muted mt-2">Payroll period: <strong id="staffSalaryPeriodLabel">April 2026</strong></div>
+                <div class="mt-3"><span class="badge rounded-pill text-bg-danger px-3 py-2" id="staffSalaryStatus">Pending</span></div>
+                <div class="small text-muted mt-2">Includes attendance, report, task, loan, advance, and bonus adjustments.</div>
+              </div>
+            </div>
+            <div class="col-12 col-xl-4">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Weekly Report</h3>
+                    <p>Status for the current week.</p>
+                  </div>
+                </div>
+                <div class="small text-muted" id="staffReportsDetail"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="row g-4 mb-4">
+            <div class="col-12 col-xl-4">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Attendance Per Day</h3>
+                    <p>Your last 7 attendance records.</p>
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr><th>Date</th><th>Time In</th><th>Time Out</th><th>Status</th></tr>
+                    </thead>
+                    <tbody id="staffDailyAttendanceBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            <div class="col-12 col-xl-4">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Other Staff</h3>
+                    <p>Present staff are green, absent staff are red.</p>
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr><th>Name</th><th>Status</th></tr>
+                    </thead>
+                    <tbody id="staffColleaguesBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            <div class="col-12 col-xl-4">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Report Count by Month</h3>
+                    <p>Weekly reports refresh monthly.</p>
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr><th>Month</th><th class="text-end">Reports</th></tr>
+                    </thead>
+                    <tbody id="staffMonthlyReportsBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="row g-4 mb-4">
+            <div class="col-12 col-xl-4">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Submit Weekly Report</h3>
+                    <p>Send your weekly update to the admin register.</p>
+                  </div>
+                </div>
+                <form id="staffReportForm" class="stack-form">
+                  <div>
+                    <label class="form-label">Report Title</label>
+                    <input class="form-control" id="staffReportTitle" required>
+                  </div>
+                  <div>
+                    <label class="form-label">Report Content</label>
+                    <textarea class="form-control" id="staffReportContent" rows="5" required></textarea>
+                  </div>
+                  <button class="btn btn-primary" type="submit" id="staffReportSubmitBtn">Submit Report</button>
+                  <div class="small text-muted">Your report will appear in the admin register immediately after submission.</div>
+                </form>
+              </div>
+            </div>
+            <div class="col-12 col-xl-8">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Weekly Report History</h3>
+                    <p>Your submitted reports and recent updates.</p>
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr>
+                        <th>Submitted</th><th>Title</th><th>Preview</th>
+                      </tr>
+                    </thead>
+                    <tbody id="staffReportsBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="row g-4 mb-4">
+            <div class="col-12 col-xl-6">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Your Tasks</h3>
+                    <p>Progress assigned to your profile.</p>
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr>
+                        <th>Task</th><th>Deadline</th><th class="text-end">Progress</th><th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody id="staffTasksBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            <div class="col-12 col-xl-6">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Your Deductions</h3>
+                    <p>Purpose and amount for each deduction.</p>
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr>
+                        <th>Type</th><th>Purpose</th><th class="text-end">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody id="staffDeductionsBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </section>
+
         <section class="view-panel" id="employeesView">
           <div class="row g-4">
             <div class="col-12 col-xl-4">
@@ -150,6 +361,10 @@
                   <div>
                     <label class="form-label">Full Name</label>
                     <input class="form-control" id="employeeName" required>
+                  </div>
+                  <div>
+                    <label class="form-label">Email</label>
+                    <input class="form-control" id="employeeEmail" type="email" placeholder="staff@hr.local" required>
                   </div>
                   <div>
                     <label class="form-label">Position</label>
@@ -168,6 +383,7 @@
                     <button class="btn btn-outline-secondary" type="button" id="employeeResetBtn">Reset</button>
                   </div>
                 </form>
+                <div class="mt-3 small text-muted d-none" id="employeeCredentialBox"></div>
               </div>
             </div>
             <div class="col-12 col-xl-8">
@@ -185,7 +401,7 @@
                   <table class="table align-middle table-hover data-table">
                     <thead>
                       <tr>
-                        <th>ID</th><th>Name</th><th>Position</th><th>Department</th><th class="text-end">Salary</th><th>Actions</th>
+                        <th>ID</th><th>Name</th><th>Email</th><th>Username</th><th>Position</th><th>Department</th><th>Salary Paid</th><th class="text-end">Salary</th><th>Actions</th>
                       </tr>
                     </thead>
                     <tbody id="employeeTableBody"></tbody>
@@ -239,6 +455,13 @@
                     <div class="col-6">
                       <label class="form-label">Time Out</label>
                       <input class="form-control" id="attendanceTimeOut" type="time">
+                    </div>
+                  </div>
+                  <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">
+                    <div class="small text-muted">Admin control for attendance sign-in lock.</div>
+                    <div class="d-flex align-items-center gap-2">
+                      <span class="badge rounded-pill text-bg-success px-3 py-2" id="attendanceLockStatus">Open</span>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" id="attendanceLockBtn">Lock Attendance</button>
                     </div>
                   </div>
                   <button class="btn btn-primary" type="submit">Save Attendance</button>
@@ -345,11 +568,12 @@
               <div class="panel-card">
                 <div class="panel-header">
                   <div>
-                    <h3>Weekly Report Submission</h3>
+                    <h3 id="reportFormTitle">Weekly Report Submission</h3>
                     <p>Submit and track weekly updates.</p>
                   </div>
                 </div>
                 <form id="reportForm" class="stack-form">
+                  <input type="hidden" id="reportId">
                   <div>
                     <label class="form-label">Employee</label>
                     <select class="form-select" id="reportEmployee" required></select>
@@ -362,8 +586,8 @@
                     <label class="form-label">Report Content</label>
                     <textarea class="form-control" id="reportContent" rows="5" required></textarea>
                   </div>
-                  <button class="btn btn-primary" type="submit">Submit Report</button>
-                  <div class="small text-muted">Late submission after Saturday 10:00 AM attracts a penalty.</div>
+                  <button class="btn btn-primary" type="submit" id="reportSubmitBtn">Submit Report</button>
+                  <div class="small text-muted">Submit between Friday 12:00 PM and Saturday 10:00 AM to avoid a late penalty.</div>
                 </form>
               </div>
             </div>
@@ -543,12 +767,17 @@
                     <h3>Employee Salary Summary</h3>
                     <p>Gross salary, adjustments, and final amount payable.</p>
                   </div>
+                  <div class="ms-md-auto d-flex align-items-center gap-2">
+                    <label class="form-label mb-0 small text-muted" for="payrollPeriodFilter">Payroll month</label>
+                    <select class="form-select" id="payrollPeriodFilter"></select>
+                    <span class="badge rounded-pill text-bg-light px-3 py-2" id="payrollPeriodLabel">April 2026</span>
+                  </div>
                 </div>
                 <div class="table-responsive">
                   <table class="table align-middle table-hover data-table">
                     <thead>
                       <tr>
-                        <th>Employee</th><th class="text-end">Base Salary</th><th class="text-end">Bonuses</th><th class="text-end">Loans + Advances</th><th class="text-end">Other Deductions</th><th class="text-end">Net Salary</th>
+                        <th>Employee</th><th>Period</th><th class="text-end">Base Salary</th><th class="text-end">Bonuses</th><th class="text-end">Loans + Advances</th><th class="text-end">Other Deductions</th><th class="text-end">Net Salary</th><th>Status</th><th></th>
                       </tr>
                     </thead>
                     <tbody id="payrollSummaryTableBody"></tbody>
@@ -617,6 +846,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>

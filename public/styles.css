@@ -23,6 +23,10 @@ body {
   min-height: 100%;
 }
 
+html {
+  font-size: calc(100% - 2px);
+}
+
 body {
   margin: 0;
   font-family: "Manrope", sans-serif;

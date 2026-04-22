@@ -1,6 +1,6 @@
 # HR Management Suite
 
-Single-page HR management web app built with HTML, CSS, JavaScript, Bootstrap 5, Chart.js, and localStorage.
+Single-page HR management web app built with HTML, CSS, JavaScript, Bootstrap 5, Chart.js, and Firebase Firestore.
 
 ## Features
 
@@ -11,7 +11,7 @@ Single-page HR management web app built with HTML, CSS, JavaScript, Bootstrap 5,
 - Weekly report submission with late penalty logic
 - Finance and income tracking with monthly, 4-month, and yearly views
 - Budget tracker with over-limit alerts
-- Admin login backed by localStorage
+- Admin login backed by shared Firestore data
 
 ## Login
 
@@ -20,7 +20,7 @@ Single-page HR management web app built with HTML, CSS, JavaScript, Bootstrap 5,
 
 ## Run
 
-Open the app through a local web server so browser storage works consistently.
+Open the app through a local web server or Firebase Hosting.
 
 Example:
 
@@ -32,5 +32,5 @@ Then open `http://localhost:3000`.
 
 ## Notes
 
-- Data is stored locally in the browser.
-- Authentication and persistence are client-side only.
+- Data is stored in Firestore so it is shared across devices after deployment.
+- Session login state is still kept in the browser for the current device.
