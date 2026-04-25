@@ -19,8 +19,8 @@ const firebaseAppStateRef = doc(firebaseDb, 'appState', 'main');
 
 const defaultSeed = {
   users: [
-    { name: 'System Admin', username: 'Admin', email: 'admin@hr.local', role: 'admin', password: 'Chrisella1!' },
-    { name: 'Staff User', username: 'staff@hr.local', email: 'staff@hr.local', role: 'staff', password: 'EMP-9001', employeeId: 'EMP-9001' }
+    { name: 'System Admin', username: 'Admin', email: 'admin@hr.local', role: 'admin', password: 'Chrisella1!', active: true },
+    { name: 'Staff User', username: 'staff@hr.local', email: 'staff@hr.local', role: 'staff', password: 'EMP-9001', employeeId: 'EMP-9001', active: true }
   ],
   employees: [
     {
@@ -31,6 +31,7 @@ const defaultSeed = {
       position: 'Staff Officer',
       department: 'Operations',
       salary: 250000,
+      active: true,
       salaryPaid: false,
       salaryPaidAt: null,
       createdAt: new Date().toISOString()
@@ -251,11 +252,15 @@ async function prepareDatabase(database) {
         ...user,
         username: 'Admin',
         email: user.email || 'admin@hr.local',
+        active: user.active !== false,
         passwordHash: await hashPassword('Chrisella1!')
       };
     }
 
-    return user;
+    return {
+      ...user,
+      active: user.active !== false
+    };
   }));
 
   const nonStaffUsers = normalized.users.filter((user) => user.role !== 'staff' || !user.employeeId);
@@ -286,6 +291,7 @@ async function prepareDatabase(database) {
       ...employee,
       email,
       username: email,
+      active: employee.active !== false,
       salaryPaid,
       salaryPaidAt
     });
@@ -296,6 +302,7 @@ async function prepareDatabase(database) {
       email,
       role: 'staff',
       employeeId: employee.id,
+      active: employee.active !== false,
       passwordHash: await hashPassword(employee.id)
     });
   }
@@ -335,6 +342,7 @@ async function createSeedDatabase() {
       email: user.email,
       role: user.role,
       employeeId: user.employeeId || null,
+      active: user.active !== false,
       passwordHash: await hashPassword(user.password)
     });
   }
@@ -386,6 +394,10 @@ function getCurrentEmployee() {
   }
 
   return state.db.employees.find((employee) => String(employee.email || '').toLowerCase() === String(state.session.email || '').toLowerCase()) || null;
+}
+
+function isEmployeeActive(employee) {
+  return employee?.active !== false;
 }
 
 function isStaffSession() {
@@ -451,6 +463,7 @@ function getMonthlyReportCounts(employeeId) {
 function getStaffPresenceToday() {
   const today = todayISO(0);
   return state.db.employees
+    .filter((employee) => isEmployeeActive(employee))
     .filter((employee) => employee.id !== getCurrentEmployeeId())
     .map((employee) => {
       const attendance = state.db.attendance.find((entry) => entry.employeeId === employee.id && entry.date === today);
@@ -625,7 +638,10 @@ function isSalaryCategory(category) {
 }
 
 function buildSelectOptions() {
-  const options = state.db.employees.map((employee) => `<option value="${employee.id}">${employee.fullName} · ${employee.id}</option>`).join('');
+  const options = state.db.employees
+    .filter((employee) => isEmployeeActive(employee))
+    .map((employee) => `<option value="${employee.id}">${employee.fullName} · ${employee.id}</option>`)
+    .join('');
   [dom.attendanceEmployee, dom.taskEmployee, dom.reportEmployee, dom.payrollAdjustmentEmployee].forEach((select) => {
     if (select) select.innerHTML = options || '<option value="">No employees available</option>';
   });
@@ -823,6 +839,7 @@ function renderEmployees() {
   }).map((employee) => {
     const payroll = getEmployeeDeductions(employee.id);
     const payrollPayment = getPayrollPayment(employee.id, payrollPeriodKey);
+    const active = isEmployeeActive(employee);
     return `
       <tr>
         <td><strong>${employee.id}</strong></td>
@@ -834,7 +851,9 @@ function renderEmployees() {
         <td>${payrollPayment?.paid ? `<span class="chip chip-success">Paid ${payrollPeriodLabel}</span>` : `<span class="chip chip-danger">Pending ${payrollPeriodLabel}</span>`}</td>
         <td class="text-end">${formatCurrency(employee.salary)}</td>
         <td>
+          <div class="small mb-2"><span class="chip ${active ? 'chip-success' : 'chip-danger'}">${active ? 'Active' : 'Deactivated'}</span></div>
           <button class="btn btn-sm btn-soft me-1" data-action="edit-employee" data-id="${employee.id}">Edit</button>
+          <button class="btn btn-sm ${active ? 'btn-outline-secondary' : 'btn-primary'} me-1" data-action="toggle-employee-active" data-id="${employee.id}">${active ? 'Deactivate' : 'Reactivate'}</button>
           <button class="btn btn-sm btn-outline-secondary" data-action="delete-employee" data-id="${employee.id}">Delete</button>
           <button class="btn btn-sm btn-outline-secondary mt-1" data-action="show-employee-credentials" data-id="${employee.id}">Credentials</button>
           <div class="small text-muted mt-2">Net salary: ${formatCurrency(payroll.finalSalary)}</div>
@@ -1087,6 +1106,15 @@ function renderStaffPortal() {
   const employee = getCurrentEmployee();
   const payrollPeriodKey = getSelectedPayrollPeriodKey();
   const payrollPeriodLabel = getPayrollPeriodLabel(payrollPeriodKey);
+  const inactive = Boolean(employee && !isEmployeeActive(employee));
+
+  if (dom.staffInactiveState) dom.staffInactiveState.classList.toggle('d-none', !inactive);
+  if (dom.staffActiveContent) dom.staffActiveContent.classList.toggle('d-none', inactive);
+
+  if (inactive) {
+    return;
+  }
+
   if (!employee) {
     dom.staffPortalStatus.textContent = 'No employee profile is linked to this account yet.';
     dom.staffTasksBody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">No linked employee profile found</td></tr>';
@@ -1265,7 +1293,8 @@ async function upsertEmployee(event) {
     username: credentials.username,
     position: dom.employeePosition.value.trim(),
     department: dom.employeeDepartment.value.trim(),
-    salary: Number(dom.employeeSalary.value)
+    salary: Number(dom.employeeSalary.value),
+    active: existingEmployee ? existingEmployee.active !== false : true
   };
 
   const userRecord = {
@@ -1274,6 +1303,7 @@ async function upsertEmployee(event) {
     email: employee.email,
     role: 'staff',
     employeeId: employee.id,
+    active: employee.active,
     passwordHash: await hashPassword(employee.id)
   };
 
@@ -1544,6 +1574,20 @@ function handleTableActions(event) {
     return;
   }
 
+  if (action === 'toggle-employee-active') {
+    const employee = state.db.employees.find((item) => item.id === id);
+    if (!employee) return;
+    const nextActive = !isEmployeeActive(employee);
+    if (!confirm(nextActive ? 'Reactivate this employee account?' : 'Deactivate this employee account?')) return;
+
+    state.db.employees = state.db.employees.map((item) => (item.id === id ? { ...item, active: nextActive } : item));
+    state.db.users = state.db.users.map((item) => (item.employeeId === id ? { ...item, active: nextActive } : item));
+    saveDatabase();
+    showToast(nextActive ? 'Employee reactivated.' : 'Employee deactivated.', 'success');
+    refreshAll();
+    return;
+  }
+
   if (action === 'delete-employee') {
     if (!confirm('Delete this employee and related records?')) return;
     state.db.employees = state.db.employees.filter((item) => item.id !== id);
@@ -1669,6 +1713,11 @@ async function handleLogin(event) {
     return;
   }
 
+  if (user.role === 'staff' && user.active === false) {
+    showToast('This staff account has been deactivated.', 'danger');
+    return;
+  }
+
   saveSession({ email: user.email, role: user.role, name: user.name, employeeId: user.employeeId || null });
   bootApp();
   showToast(`Welcome, ${user.name}.`, 'success');
@@ -1735,7 +1784,7 @@ function cacheDom() {
     payrollAdjustmentForm: 'payrollAdjustmentForm', payrollAdjustmentId: 'payrollAdjustmentId', payrollAdjustmentFormTitle: 'payrollAdjustmentFormTitle', payrollAdjustmentSubmitBtn: 'payrollAdjustmentSubmitBtn', payrollAdjustmentEmployee: 'payrollAdjustmentEmployee', payrollAdjustmentType: 'payrollAdjustmentType', payrollAdjustmentAmount: 'payrollAdjustmentAmount', payrollAdjustmentDate: 'payrollAdjustmentDate', payrollAdjustmentNotes: 'payrollAdjustmentNotes', payrollAdjustmentResetBtn: 'payrollAdjustmentResetBtn', payrollAdjustmentSearch: 'payrollAdjustmentSearch', payrollAdjustmentTableBody: 'payrollAdjustmentTableBody', payrollLoansMetric: 'payrollLoansMetric', payrollAdvancesMetric: 'payrollAdvancesMetric', payrollBonusesMetric: 'payrollBonusesMetric', payrollNetMetric: 'payrollNetMetric', payrollPeriodFilter: 'payrollPeriodFilter', payrollPeriodLabel: 'payrollPeriodLabel', payrollSummaryTableBody: 'payrollSummaryTableBody', budgetForm: 'budgetForm', salaryBudget: 'salaryBudget',
     operationsBudget: 'operationsBudget', budgetSalaryValue: 'budgetSalaryValue', budgetOperationsValue: 'budgetOperationsValue', budgetSalaryActual: 'budgetSalaryActual',
     budgetOperationsActual: 'budgetOperationsActual', budgetSalaryStatus: 'budgetSalaryStatus', budgetOperationsStatus: 'budgetOperationsStatus', budgetAlerts: 'budgetAlerts',
-    staffPortalStatus: 'staffPortalStatus', staffAttendanceSummary: 'staffAttendanceSummary', staffAttendanceDetail: 'staffAttendanceDetail', staffReportsSummary: 'staffReportsSummary', staffReportsDetail: 'staffReportsDetail', staffSalaryValue: 'staffSalaryValue', staffActualSalaryValue: 'staffActualSalaryValue', staffSalaryPeriodLabel: 'staffSalaryPeriodLabel', staffSalaryStatus: 'staffSalaryStatus', staffTasksBody: 'staffTasksBody', staffReportsBody: 'staffReportsBody', staffDeductionsBody: 'staffDeductionsBody', staffDailyAttendanceBody: 'staffDailyAttendanceBody', staffMonthlyReportsBody: 'staffMonthlyReportsBody', staffColleaguesBody: 'staffColleaguesBody', staffCheckInBtn: 'staffCheckInBtn', staffCheckOutBtn: 'staffCheckOutBtn', attendanceLockStatus: 'attendanceLockStatus', attendanceLockBtn: 'attendanceLockBtn', employeeCredentialBox: 'employeeCredentialBox',
+    staffPortalStatus: 'staffPortalStatus', staffAttendanceSummary: 'staffAttendanceSummary', staffAttendanceDetail: 'staffAttendanceDetail', staffReportsSummary: 'staffReportsSummary', staffReportsDetail: 'staffReportsDetail', staffSalaryValue: 'staffSalaryValue', staffActualSalaryValue: 'staffActualSalaryValue', staffSalaryPeriodLabel: 'staffSalaryPeriodLabel', staffSalaryStatus: 'staffSalaryStatus', staffTasksBody: 'staffTasksBody', staffReportsBody: 'staffReportsBody', staffDeductionsBody: 'staffDeductionsBody', staffDailyAttendanceBody: 'staffDailyAttendanceBody', staffMonthlyReportsBody: 'staffMonthlyReportsBody', staffColleaguesBody: 'staffColleaguesBody', staffCheckInBtn: 'staffCheckInBtn', staffCheckOutBtn: 'staffCheckOutBtn', staffInactiveState: 'staffInactiveState', staffActiveContent: 'staffActiveContent', attendanceLockStatus: 'attendanceLockStatus', attendanceLockBtn: 'attendanceLockBtn', employeeCredentialBox: 'employeeCredentialBox',
     toastContainer: 'toastContainer'
   };
 
