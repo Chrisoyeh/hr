@@ -1,8 +1,9 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js';
-import { doc, getDoc, getFirestore, setDoc } from 'https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js';
+import { doc, getDoc, getFirestore, onSnapshot, setDoc } from 'https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js';
 
 const SESSION_KEY = 'hr-management-session-v1';
 const LATE_CUTOFF = '07:45';
+const ABSENT_CUTOFF = '12:00'; // Staff not signed in by this time are auto-marked absent
 const CLOSING_TIME = '15:30';
 const firebaseConfig = {
   apiKey: 'AIzaSyDMGBOcLA8xf7dpFlQy4jeLTtWFcHIHUf0',
@@ -328,8 +329,16 @@ async function loadDatabase() {
     return seeded;
   }
 
-  const prepared = await prepareDatabase(snapshot.data());
-  await setDoc(firebaseAppStateRef, prepared);
+  const raw = snapshot.data();
+  const prepared = await prepareDatabase(raw);
+  // Only write back to Firestore when migration is needed (passwords not yet hashed).
+  // Avoiding unconditional write-back eliminates the race condition where a page
+  // refresh can overwrite a sign-in record that was saved by saveDatabase() moments
+  // before the new load's getDoc() call completed.
+  const needsMigration = (raw.users || []).some((user) => !user.passwordHash);
+  if (needsMigration) {
+    await setDoc(firebaseAppStateRef, prepared);
+  }
   return prepared;
 }
 
@@ -365,6 +374,24 @@ function saveDatabase() {
   void setDoc(firebaseAppStateRef, state.db).catch((error) => {
     console.error('Failed to sync Firestore state:', error);
     showToast('Unable to sync data to Firebase.', 'danger');
+  });
+}
+
+// Sets up a real-time Firestore listener so all open sessions (admin, staff) see
+// updates immediately — e.g. an employee signing out is reflected on the admin
+// attendance table without a page refresh.
+function startRealtimeListener() {
+  onSnapshot(firebaseAppStateRef, (snapshot) => {
+    if (!snapshot.exists()) return;
+    const incoming = normalizeDatabase(snapshot.data());
+    // Preserve the in-memory `users` array (prepared with correct password hashes
+    // by loadDatabase) so the listener never overwrites them with raw Firestore
+    // data. All other collections are replaced for real-time sync.
+    state.db = {
+      ...incoming,
+      users: state.db?.users?.length ? state.db.users : incoming.users
+    };
+    if (state.session) refreshAll();
   });
 }
 
@@ -509,6 +536,44 @@ function setAttendanceLockState(locked) {
     attendanceLockedAt: new Date().toISOString(),
     attendanceLockedBy: state.session?.email || state.session?.name || 'admin'
   };
+}
+
+// Returns true when the current local time is at or past the noon absent cutoff.
+function isPastAbsentCutoff() {
+  const now = new Date();
+  return now.getHours() * 60 + now.getMinutes() >= timeToMinutes(ABSENT_CUTOFF);
+}
+
+// Returns the attendance record for a given employee on today's date, or null.
+function getTodayAttendanceForEmployee(employeeId) {
+  const today = todayISO(0);
+  return state.db.attendance.find((item) => item.employeeId === employeeId && item.date === today) || null;
+}
+
+// Checks whether the employee should be auto-marked absent (past noon, no sign-in yet).
+// If so, creates the Absent record, saves to Firestore, and returns true.
+// Returns false if no action was needed.
+function autoMarkAbsentIfNeeded(employee) {
+  if (!employee) return false;
+  if (!isPastAbsentCutoff()) return false;
+
+  const existing = getTodayAttendanceForEmployee(employee.id);
+  if (existing) return false; // Already has a record (present or already marked absent)
+
+  const today = todayISO(0);
+  state.db.attendance.push({
+    id: crypto.randomUUID(),
+    employeeId: employee.id,
+    date: today,
+    status: 'Absent',
+    permission: false,
+    timeIn: '',
+    timeOut: '',
+    autoAbsent: true
+  });
+
+  saveDatabase();
+  return true;
 }
 
 function getPayrollAdjustmentSummary(employeeId) {
@@ -867,11 +932,18 @@ function renderEmployees() {
 
 function renderAttendance() {
   const query = dom.attendanceSearch.value.trim().toLowerCase();
+  const dateFilter = dom.attendanceDateFilter?.value || '';
+  const today = todayISO(0);
+  // Default: show only today. A date filter pins to a specific date.
+  // A search query searches across all records regardless of date.
   const rows = [...state.db.attendance]
     .sort((left, right) => new Date(right.date) - new Date(left.date))
     .filter((entry) => {
-      return [entry.date, getEmployeeName(entry.employeeId), entry.status, entry.timeIn, entry.timeOut]
-        .some((field) => String(field).toLowerCase().includes(query));
+      if (query) {
+        return [entry.date, getEmployeeName(entry.employeeId), entry.status, entry.timeIn, entry.timeOut]
+          .some((field) => String(field).toLowerCase().includes(query));
+      }
+      return entry.date === (dateFilter || today);
     })
     .map((entry) => {
       const late = isLate(entry);
@@ -882,6 +954,7 @@ function renderAttendance() {
           <td>${getEmployeeName(entry.employeeId)}</td>
           <td><span class="chip ${entry.status === 'Present' ? 'chip-success' : 'chip-danger'}">${entry.status}</span></td>
           <td>${entry.timeIn || '—'} ${entry.status === 'Present' ? `<div class="small text-muted">Close: ${CLOSING_TIME}</div>` : ''}</td>
+          <td>${entry.timeOut || '—'}</td>
           <td>${late ? '<span class="chip chip-warning">Late</span>' : '<span class="chip chip-neutral">On time</span>'}</td>
           <td>${entry.permission ? '<span class="chip chip-success">Granted</span>' : '<span class="chip chip-neutral">No</span>'}</td>
           <td class="text-end fw-bold">${formatCurrency(penalty)}</td>
@@ -889,7 +962,7 @@ function renderAttendance() {
         </tr>`;
     }).join('');
 
-  dom.attendanceTableBody.innerHTML = rows || '<tr><td colspan="8" class="text-center text-muted py-4">No attendance logs found</td></tr>';
+  dom.attendanceTableBody.innerHTML = rows || `<tr><td colspan="9" class="text-center text-muted py-4">${query ? 'No attendance logs found.' : 'No attendance records for today. Use the date filter or search to view other dates.'}</td></tr>`;
   if (dom.attendanceLockStatus) {
     dom.attendanceLockStatus.textContent = getAttendanceLockState() ? 'Locked' : 'Open';
     dom.attendanceLockStatus.className = `badge rounded-pill ${getAttendanceLockState() ? 'text-bg-danger' : 'text-bg-success'} px-3 py-2`;
@@ -901,11 +974,15 @@ function renderAttendance() {
 
 function renderTasks() {
   const query = dom.taskSearch.value.trim().toLowerCase();
+  const showAll = dom.taskStatusFilter?.value === 'all';
   const rows = [...state.db.tasks]
     .sort((left, right) => new Date(left.deadline) - new Date(right.deadline))
     .filter((task) => {
-      return [task.title, task.description, task.deadline, getEmployeeName(task.employeeId)]
+      const textMatch = !query || [task.title, task.description, task.deadline, getEmployeeName(task.employeeId)]
         .some((field) => String(field).toLowerCase().includes(query));
+      // Default: show only incomplete (active) tasks. Switch to "All" to include completed.
+      const statusMatch = showAll || query || Number(task.completion) < 100;
+      return textMatch && statusMatch;
     })
     .map((task) => {
       const penalty = getTaskPenalty(task);
@@ -928,16 +1005,22 @@ function renderTasks() {
         </tr>`;
     }).join('');
 
-  dom.taskTableBody.innerHTML = rows || '<tr><td colspan="7" class="text-center text-muted py-4">No tasks found</td></tr>';
+  dom.taskTableBody.innerHTML = rows || `<tr><td colspan="7" class="text-center text-muted py-4">${showAll || query ? 'No tasks found.' : 'No active tasks. Switch to "All tasks" to view completed ones.'}</td></tr>`;
 }
 
 function renderReports() {
   const query = dom.reportSearch.value.trim().toLowerCase();
+  const dateFilter = dom.reportDateFilter?.value || '';
+  const today = todayISO(0);
   const rows = [...state.db.reports]
     .sort((left, right) => new Date(right.submittedAt) - new Date(left.submittedAt))
     .filter((report) => {
-      return [report.title, report.content, report.submittedAt, getEmployeeName(report.employeeId)]
-        .some((field) => String(field).toLowerCase().includes(query));
+      if (query) {
+        return [report.title, report.content, report.submittedAt, getEmployeeName(report.employeeId)]
+          .some((field) => String(field).toLowerCase().includes(query));
+      }
+      const targetDate = dateFilter || today;
+      return String(report.submittedAt || '').startsWith(targetDate);
     })
     .map((report) => {
       const late = isLateReport(report);
@@ -959,7 +1042,7 @@ function renderReports() {
         </tr>`;
     }).join('');
 
-  dom.reportTableBody.innerHTML = rows || '<tr><td colspan="6" class="text-center text-muted py-4">No reports found</td></tr>';
+  dom.reportTableBody.innerHTML = rows || `<tr><td colspan="6" class="text-center text-muted py-4">${query ? 'No reports found.' : 'No reports submitted today. Use the date filter or search to view other dates.'}</td></tr>`;
 }
 
 function renderFinance() {
@@ -1017,14 +1100,19 @@ function getPayrollAdjustmentTotals() {
 
 function renderPayrollAdjustments() {
   const query = dom.payrollAdjustmentSearch.value.trim().toLowerCase();
+  const dateFilter = dom.payrollAdjDateFilter?.value || '';
+  const today = todayISO(0);
   const payrollPeriodKey = getSelectedPayrollPeriodKey();
   const payrollPeriodLabel = getPayrollPeriodLabel(payrollPeriodKey);
   populatePayrollPeriodFilter();
   const rows = [...state.db.payrollAdjustments]
     .sort((left, right) => new Date(right.date) - new Date(left.date))
     .filter((entry) => {
-      return [entry.date, getEmployeeName(entry.employeeId), entry.type, entry.notes]
-        .some((field) => String(field).toLowerCase().includes(query));
+      if (query) {
+        return [entry.date, getEmployeeName(entry.employeeId), entry.type, entry.notes]
+          .some((field) => String(field).toLowerCase().includes(query));
+      }
+      return entry.date === (dateFilter || today);
     })
     .map((entry) => `
       <tr>
@@ -1040,7 +1128,7 @@ function renderPayrollAdjustments() {
       </tr>`).join('');
 
   const totals = getPayrollAdjustmentTotals();
-  dom.payrollAdjustmentTableBody.innerHTML = rows || '<tr><td colspan="6" class="text-center text-muted py-4">No payroll adjustments found</td></tr>';
+  dom.payrollAdjustmentTableBody.innerHTML = rows || `<tr><td colspan="6" class="text-center text-muted py-4">${query ? 'No payroll adjustments found.' : 'No payroll adjustments for today. Use the date filter or search to view other dates.'}</td></tr>`;
   dom.payrollLoansMetric.textContent = formatCurrency(totals.loan);
   dom.payrollAdvancesMetric.textContent = formatCurrency(totals.advance);
   dom.payrollBonusesMetric.textContent = formatCurrency(totals.bonus);
@@ -1134,6 +1222,23 @@ function renderStaffPortal() {
     return;
   }
 
+  // Silently auto-mark absent when the staff portal is opened after noon without a sign-in.
+  // This ensures the deduction is recorded even if the staff never clicked Sign In.
+  autoMarkAbsentIfNeeded(employee);
+
+  const todayRecord = getTodayAttendanceForEmployee(employee.id);
+  const isAbsentToday = todayRecord?.status === 'Absent';
+
+  // Disable / enable attendance buttons based on today's status.
+  if (dom.staffCheckInBtn) {
+    dom.staffCheckInBtn.disabled = isAbsentToday;
+    dom.staffCheckInBtn.title = isAbsentToday ? 'You are recorded as absent today' : '';
+  }
+  if (dom.staffCheckOutBtn) {
+    dom.staffCheckOutBtn.disabled = isAbsentToday;
+    dom.staffCheckOutBtn.title = isAbsentToday ? 'You are recorded as absent today' : '';
+  }
+
   const payroll = getEmployeeDeductions(employee.id);
   const payrollPayment = getPayrollPayment(employee.id, payrollPeriodKey);
   const tasks = getCurrentEmployeeTasks();
@@ -1146,13 +1251,18 @@ function renderStaffPortal() {
 
   dom.staffPortalStatus.textContent = `${employee.fullName} · ${employee.position} · ${employee.department}`;
   dom.staffAttendanceSummary.textContent = latestAttendance ? formatDate(latestAttendance.date) : 'No logs';
-  dom.staffAttendanceDetail.textContent = latestAttendance
-    ? `Last attendance: ${formatDate(latestAttendance.date)} (${latestAttendance.status}${latestAttendance.timeIn ? `, in ${latestAttendance.timeIn}` : ''}${latestAttendance.timeOut ? `, out ${latestAttendance.timeOut}` : ''})`
-    : 'No attendance record has been logged yet.';
+
+  if (isAbsentToday) {
+    dom.staffAttendanceDetail.textContent = 'You were recorded absent for today because you did not sign in before 12:00 noon. An ₦8,000 deduction has been applied. Sign-in is no longer available.';
+  } else {
+    dom.staffAttendanceDetail.textContent = latestAttendance
+      ? `Last attendance: ${formatDate(latestAttendance.date)} (${latestAttendance.status}${latestAttendance.timeIn ? `, in ${latestAttendance.timeIn}` : ''}${latestAttendance.timeOut ? `, out ${latestAttendance.timeOut}` : ''})`
+      : 'No attendance record has been logged yet.';
+  }
   dom.staffReportsSummary.textContent = `${getCurrentMonthReportCount()} this month`;
   dom.staffReportsDetail.textContent = hasSubmittedCurrentWeekReport()
-    ? 'Weekly report submitted for the current month.'
-    : 'Weekly report not yet submitted for the current month.';
+    ? 'Weekly report submitted for the current week.'
+    : 'Weekly report not yet submitted for the current week.';
   dom.staffSalaryValue.textContent = formatCurrency(payroll.finalSalary);
   dom.staffActualSalaryValue.textContent = formatCurrency(payroll.originalSalary);
   if (dom.staffSalaryPeriodLabel) dom.staffSalaryPeriodLabel.textContent = payrollPeriodLabel;
@@ -1483,8 +1593,30 @@ function submitStaffAttendance(action) {
     return;
   }
 
+  // Auto-mark absent if past noon and no record yet, then block the action.
+  if (autoMarkAbsentIfNeeded(employee)) {
+    showToast('You have been automatically marked absent. Sign-in is no longer available for today.', 'danger');
+    refreshAll();
+    return;
+  }
+
+  // Block if today's record is already Absent (auto or admin-set).
+  const todayRecord = getTodayAttendanceForEmployee(employee.id);
+  if (todayRecord && todayRecord.status === 'Absent') {
+    showToast('You are recorded as absent today. Sign-in and sign-out are not available.', 'danger');
+    return;
+  }
+
   if (action === 'check-in' && getAttendanceLockState()) {
-    showToast('attendace Locked you are late', 'danger');
+    showToast('Attendance locked. You are late.', 'danger');
+    return;
+  }
+
+  // Block check-in if past the noon cutoff (they should have been caught above, but guard anyway).
+  if (action === 'check-in' && isPastAbsentCutoff()) {
+    showToast('Sign-in is no longer available after 12:00 noon. You have been marked absent.', 'danger');
+    autoMarkAbsentIfNeeded(employee);
+    refreshAll();
     return;
   }
 
@@ -1591,9 +1723,11 @@ function handleTableActions(event) {
   if (action === 'delete-employee') {
     if (!confirm('Delete this employee and related records?')) return;
     state.db.employees = state.db.employees.filter((item) => item.id !== id);
+    state.db.users = state.db.users.filter((item) => item.employeeId !== id);
     state.db.attendance = state.db.attendance.filter((item) => item.employeeId !== id);
     state.db.tasks = state.db.tasks.filter((item) => item.employeeId !== id);
     state.db.reports = state.db.reports.filter((item) => item.employeeId !== id);
+    state.db.payrollAdjustments = state.db.payrollAdjustments.filter((item) => item.employeeId !== id);
     state.db.payrollPayments = state.db.payrollPayments.filter((item) => item.employeeId !== id);
     saveDatabase();
     showToast('Employee deleted.', 'success');
@@ -1785,6 +1919,7 @@ function cacheDom() {
     operationsBudget: 'operationsBudget', budgetSalaryValue: 'budgetSalaryValue', budgetOperationsValue: 'budgetOperationsValue', budgetSalaryActual: 'budgetSalaryActual',
     budgetOperationsActual: 'budgetOperationsActual', budgetSalaryStatus: 'budgetSalaryStatus', budgetOperationsStatus: 'budgetOperationsStatus', budgetAlerts: 'budgetAlerts',
     staffPortalStatus: 'staffPortalStatus', staffAttendanceSummary: 'staffAttendanceSummary', staffAttendanceDetail: 'staffAttendanceDetail', staffReportsSummary: 'staffReportsSummary', staffReportsDetail: 'staffReportsDetail', staffSalaryValue: 'staffSalaryValue', staffActualSalaryValue: 'staffActualSalaryValue', staffSalaryPeriodLabel: 'staffSalaryPeriodLabel', staffSalaryStatus: 'staffSalaryStatus', staffTasksBody: 'staffTasksBody', staffReportsBody: 'staffReportsBody', staffDeductionsBody: 'staffDeductionsBody', staffDailyAttendanceBody: 'staffDailyAttendanceBody', staffMonthlyReportsBody: 'staffMonthlyReportsBody', staffColleaguesBody: 'staffColleaguesBody', staffCheckInBtn: 'staffCheckInBtn', staffCheckOutBtn: 'staffCheckOutBtn', staffInactiveState: 'staffInactiveState', staffActiveContent: 'staffActiveContent', attendanceLockStatus: 'attendanceLockStatus', attendanceLockBtn: 'attendanceLockBtn', employeeCredentialBox: 'employeeCredentialBox',
+    attendanceDateFilter: 'attendanceDateFilter', reportDateFilter: 'reportDateFilter', taskStatusFilter: 'taskStatusFilter', payrollAdjDateFilter: 'payrollAdjDateFilter',
     toastContainer: 'toastContainer'
   };
 
@@ -1815,6 +1950,10 @@ function bindEvents() {
   dom.attendanceSearch.addEventListener('input', renderAttendance);
   dom.taskSearch.addEventListener('input', renderTasks);
   dom.reportSearch.addEventListener('input', renderReports);
+  if (dom.attendanceDateFilter) dom.attendanceDateFilter.addEventListener('change', renderAttendance);
+  if (dom.reportDateFilter) dom.reportDateFilter.addEventListener('change', renderReports);
+  if (dom.taskStatusFilter) dom.taskStatusFilter.addEventListener('change', renderTasks);
+  if (dom.payrollAdjDateFilter) dom.payrollAdjDateFilter.addEventListener('change', renderPayrollAdjustments);
   if (dom.staffCheckInBtn) dom.staffCheckInBtn.addEventListener('click', () => submitStaffAttendance('check-in'));
   if (dom.staffCheckOutBtn) dom.staffCheckOutBtn.addEventListener('click', () => submitStaffAttendance('check-out'));
   if (dom.attendanceLockBtn) dom.attendanceLockBtn.addEventListener('click', toggleAttendanceLock);
@@ -1841,6 +1980,10 @@ async function init() {
     dom.authShell.classList.remove('d-none');
     dom.appShell.classList.add('d-none');
   }
+
+  // Start real-time listener after initial boot so admin and staff portals
+  // reflect remote changes (sign-ins, sign-outs, etc.) without a page refresh.
+  startRealtimeListener();
 
   dom.attendanceDate.value = todayISO(0);
   dom.incomeDate.value = todayISO(0);

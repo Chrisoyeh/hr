@@ -418,7 +418,6 @@
               </div>
             </div>
           </div>
-          </div>
         </section>
 
         <section class="view-panel" id="attendanceView">
@@ -485,15 +484,16 @@
                     <h3>Attendance Logs</h3>
                     <p>Today and historical entries with penalties.</p>
                   </div>
-                  <div class="ms-md-auto search-wrap">
-                    <input class="form-control" id="attendanceSearch" placeholder="Search logs...">
+                  <div class="ms-md-auto d-flex gap-2 flex-wrap">
+                    <input type="date" class="form-control form-control-sm" id="attendanceDateFilter" title="Filter by date (leave empty to show today only)">
+                    <input class="form-control" id="attendanceSearch" placeholder="Search all records...">
                   </div>
                 </div>
                 <div class="table-responsive">
                   <table class="table align-middle table-hover data-table">
                     <thead>
                       <tr>
-                        <th>Date</th><th>Employee</th><th>Status</th><th>Time In</th><th>Late?</th><th>Permission</th><th class="text-end">Penalty</th><th></th>
+                        <th>Date</th><th>Employee</th><th>Status</th><th>Time In</th><th>Time Out</th><th></th>Late?</th><th>Permission</th><th class="text-end">Penalty</th><th></th>
                       </tr>
                     </thead>
                     <tbody id="attendanceTableBody"></tbody>
@@ -552,7 +552,11 @@
                     <h3>Task Board</h3>
                     <p>Incomplete work is automatically flagged.</p>
                   </div>
-                  <div class="ms-md-auto search-wrap">
+                  <div class="ms-md-auto d-flex gap-2 flex-wrap">
+                    <select class="form-select form-select-sm filter-select" id="taskStatusFilter">
+                      <option value="active">Active tasks</option>
+                      <option value="all">All tasks</option>
+                    </select>
                     <input class="form-control" id="taskSearch" placeholder="Search tasks...">
                   </div>
                 </div>
@@ -607,8 +611,9 @@
                     <h3>Report Register</h3>
                     <p>All employee submissions and penalties.</p>
                   </div>
-                  <div class="ms-md-auto search-wrap">
-                    <input class="form-control" id="reportSearch" placeholder="Search reports...">
+                  <div class="ms-md-auto d-flex gap-2 flex-wrap">
+                    <input type="date" class="form-control form-control-sm" id="reportDateFilter" title="Filter by date (leave empty to show today only)">
+                    <input class="form-control" id="reportSearch" placeholder="Search all records...">
                   </div>
                 </div>
                 <div class="table-responsive">
@@ -749,8 +754,9 @@
                     <h3>Adjustment Ledger</h3>
                     <p>Loans and advances reduce net salary, bonuses increase it.</p>
                   </div>
-                  <div class="ms-md-auto search-wrap">
-                    <input class="form-control" id="payrollAdjustmentSearch" placeholder="Search payroll entries..." >
+                  <div class="ms-md-auto d-flex gap-2 flex-wrap">
+                    <input type="date" class="form-control form-control-sm" id="payrollAdjDateFilter" title="Filter by date (leave empty to show today only)">
+                    <input class="form-control" id="payrollAdjustmentSearch" placeholder="Search all entries...">
                   </div>
                 </div>
                 <div class="table-responsive">
