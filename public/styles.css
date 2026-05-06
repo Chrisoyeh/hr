@@ -108,14 +108,21 @@ body::before {
 }
 
 .brand-mark {
-  width: 46px;
-  height: 46px;
+  width: 32px;
+  height: 32px;
   display: grid;
   place-items: center;
-  border-radius: 15px;
-  color: #ffffff;
-  background: linear-gradient(135deg, #1a1a1a, #2a2a2a);
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+}
+
+.brand-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
 }
 
 .brand-name,
