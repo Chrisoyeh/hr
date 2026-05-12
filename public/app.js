@@ -576,9 +576,28 @@ function autoMarkAbsentIfNeeded(employee) {
   return true;
 }
 
-function getPayrollAdjustmentSummary(employeeId) {
+function getPeriodKeyFromDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function isInPayrollPeriod(value, periodKey) {
+  if (!periodKey) return true;
+  return getPeriodKeyFromDate(value) === periodKey;
+}
+
+function periodKeyToDate(periodKey) {
+  if (!periodKey) return null;
+  const [year, month] = String(periodKey).split('-').map(Number);
+  if (!year || !month) return null;
+  return new Date(year, month - 1, 1);
+}
+
+function getPayrollAdjustmentSummary(employeeId, periodKey = null) {
   return state.db.payrollAdjustments
-    .filter((entry) => entry.employeeId === employeeId)
+    .filter((entry) => entry.employeeId === employeeId && isInPayrollPeriod(entry.date, periodKey))
     .reduce((accumulator, entry) => {
       const amount = Number(entry.amount || 0);
       if (entry.type === 'Bonus') accumulator.bonus += amount;
@@ -621,29 +640,34 @@ function getReportPenalty(report) {
   return isLateReport(report) ? 2000 : 0;
 }
 
-function getTaskPenalty(task) {
-  return Number(task.completion) < 100 ? 3000 : 0;
+function isTaskOverdue(task, referenceDate = todayISO(0)) {
+  return Boolean(task?.deadline)
+    && Number(task.completion) < 100
+    && String(task.deadline) < referenceDate;
 }
 
-function getEmployeeDeductions(employeeId) {
-  const payrollAdjustments = getPayrollAdjustmentSummary(employeeId);
+function getTaskPenalty(task) {
+  return isTaskOverdue(task) ? 3000 : 0;
+}
+
+function getEmployeePeriodDeductions(employeeId, periodKey) {
+  const payrollAdjustments = getPayrollAdjustmentSummary(employeeId, periodKey);
   const attendancePenalty = state.db.attendance
-    .filter((entry) => entry.employeeId === employeeId)
+    .filter((entry) => entry.employeeId === employeeId && isInPayrollPeriod(entry.date, periodKey))
     .reduce((sum, entry) => sum + getAttendancePenalty(entry), 0);
 
   const reportPenalty = state.db.reports
-    .filter((report) => report.employeeId === employeeId)
+    .filter((report) => report.employeeId === employeeId && isInPayrollPeriod(report.submittedAt, periodKey))
     .reduce((sum, report) => sum + getReportPenalty(report), 0);
 
   const taskPenalty = state.db.tasks
-    .filter((task) => task.employeeId === employeeId)
+    .filter((task) => task.employeeId === employeeId && isInPayrollPeriod(task.deadline, periodKey))
     .reduce((sum, task) => sum + getTaskPenalty(task), 0);
 
   const originalSalary = Number(state.db.employees.find((employee) => employee.id === employeeId)?.salary || 0);
   const otherDeductions = attendancePenalty + reportPenalty + taskPenalty;
   const loanAndAdvance = payrollAdjustments.loan + payrollAdjustments.advance;
   const grossSalary = originalSalary + payrollAdjustments.bonus;
-  const netSalary = Math.max(grossSalary - otherDeductions - loanAndAdvance, 0);
 
   return {
     loan: payrollAdjustments.loan,
@@ -657,13 +681,56 @@ function getEmployeeDeductions(employeeId) {
     totalDeductions: otherDeductions + loanAndAdvance,
     originalSalary,
     grossSalary,
-    finalSalary: netSalary
+    periodNetBeforeCarry: grossSalary - otherDeductions - loanAndAdvance
+  };
+}
+
+function getCarryBalanceBeforePeriod(employeeId, periodKey) {
+  const employee = state.db.employees.find((item) => item.id === employeeId);
+  const targetDate = periodKeyToDate(periodKey);
+  if (!employee || !targetDate) return 0;
+
+  const createdAtDate = employee.createdAt ? new Date(employee.createdAt) : null;
+  const startDate = createdAtDate && !Number.isNaN(createdAtDate.getTime())
+    ? new Date(createdAtDate.getFullYear(), createdAtDate.getMonth(), 1)
+    : new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
+
+  if (startDate > targetDate) return 0;
+
+  const cursor = new Date(startDate);
+  let carry = 0;
+
+  while (cursor < targetDate) {
+    const cursorPeriodKey = getCurrentPayrollPeriodKey(cursor);
+    const periodSummary = getEmployeePeriodDeductions(employeeId, cursorPeriodKey);
+    const periodPayable = periodSummary.periodNetBeforeCarry - carry;
+    carry = Math.max(-periodPayable, 0);
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+
+  return carry;
+}
+
+function getEmployeeDeductions(employeeId, periodKey = getSelectedPayrollPeriodKey()) {
+  const periodSummary = getEmployeePeriodDeductions(employeeId, periodKey);
+  const carryIn = getCarryBalanceBeforePeriod(employeeId, periodKey);
+  const netSalary = periodSummary.periodNetBeforeCarry - carryIn;
+  const carryForward = Math.max(-netSalary, 0);
+
+  return {
+    ...periodSummary,
+    carryIn,
+    carryForward,
+    totalDeductions: periodSummary.totalDeductions + carryIn,
+    finalSalary: netSalary,
+    payableBalance: netSalary
   };
 }
 
 function getPayrollTotals() {
+  const payrollPeriodKey = getSelectedPayrollPeriodKey();
   return state.db.employees.reduce((accumulator, employee) => {
-    const summary = getEmployeeDeductions(employee.id);
+    const summary = getEmployeeDeductions(employee.id, payrollPeriodKey);
     accumulator.original += summary.originalSalary;
     accumulator.deductions += summary.totalDeductions;
     accumulator.bonuses += summary.bonus;
@@ -686,8 +753,9 @@ function getOperationsActual() {
 }
 
 function getStaffDeductionRows(employeeId) {
-  const summary = getEmployeeDeductions(employeeId);
+  const summary = getEmployeeDeductions(employeeId, getSelectedPayrollPeriodKey());
   return [
+    { label: 'Carry-in deduction', purpose: 'Outstanding deduction from previous month(s)', amount: summary.carryIn },
     { label: 'Attendance penalty', purpose: 'Late arrival or absence', amount: summary.attendancePenalty },
     { label: 'Report penalty', purpose: 'Weekly report submitted late', amount: summary.reportPenalty },
     { label: 'Task penalty', purpose: 'Incomplete or overdue task', amount: summary.taskPenalty },
@@ -902,7 +970,7 @@ function renderEmployees() {
       return [employee.id, employee.fullName, employee.email, employee.position, employee.department]
       .some((field) => String(field).toLowerCase().includes(query));
   }).map((employee) => {
-    const payroll = getEmployeeDeductions(employee.id);
+    const payroll = getEmployeeDeductions(employee.id, payrollPeriodKey);
     const payrollPayment = getPayrollPayment(employee.id, payrollPeriodKey);
     const active = isEmployeeActive(employee);
     return `
@@ -986,7 +1054,8 @@ function renderTasks() {
     })
     .map((task) => {
       const penalty = getTaskPenalty(task);
-      const progressClass = Number(task.completion) === 100 ? 'chip-success' : 'chip-warning';
+      const overdue = isTaskOverdue(task);
+      const progressClass = Number(task.completion) === 100 ? 'chip-success' : overdue ? 'chip-danger' : 'chip-warning';
       return `
         <tr>
           <td>
@@ -996,7 +1065,7 @@ function renderTasks() {
           <td>${getEmployeeName(task.employeeId)}</td>
           <td>${formatDate(task.deadline)}</td>
           <td class="text-end"><span class="chip ${progressClass}">${Number(task.completion)}%</span></td>
-          <td>${Number(task.completion) === 100 ? '<span class="chip chip-success">Complete</span>' : '<span class="chip chip-warning">Incomplete</span>'}</td>
+          <td>${Number(task.completion) === 100 ? '<span class="chip chip-success">Complete</span>' : overdue ? '<span class="chip chip-danger">Overdue</span>' : '<span class="chip chip-warning">Incomplete</span>'}</td>
           <td class="text-end fw-bold">${formatCurrency(penalty)}</td>
           <td>
             <button class="btn btn-sm btn-soft me-1" data-action="edit-task" data-id="${task.id}">Edit</button>
@@ -1137,7 +1206,7 @@ function renderPayrollAdjustments() {
   if (dom.payrollPeriodFilter && !dom.payrollPeriodFilter.value) dom.payrollPeriodFilter.value = payrollPeriodKey;
 
   const summaryRows = state.db.employees.map((employee) => {
-    const summary = getEmployeeDeductions(employee.id);
+    const summary = getEmployeeDeductions(employee.id, payrollPeriodKey);
     const payment = getPayrollPayment(employee.id, payrollPeriodKey);
     return `
       <tr>
@@ -1146,9 +1215,10 @@ function renderPayrollAdjustments() {
         <td class="text-end">${formatCurrency(summary.originalSalary)}</td>
         <td class="text-end">${formatCurrency(summary.bonus)}</td>
         <td class="text-end">${formatCurrency(summary.loanAndAdvance)}</td>
-        <td class="text-end">${formatCurrency(summary.otherDeductions)}</td>
+        <td class="text-end">${formatCurrency(summary.otherDeductions)}${summary.carryIn > 0 ? `<div class="small text-muted">+ carry ${formatCurrency(summary.carryIn)}</div>` : ''}</td>
         <td class="text-end fw-bold">${formatCurrency(summary.finalSalary)}</td>
-        <td>${payment?.paid ? `<span class="chip chip-success">Paid</span><div class="small text-muted mt-1">${formatDate(payment.paidAt)}</div>` : '<span class="chip chip-danger">Pending</span>'}</td>
+        <td class="text-end">${formatCurrency(summary.carryForward)}</td>
+        <td>${payment?.paid ? `<span class="chip chip-success">Paid</span><div class="small text-muted mt-1">${formatDate(payment.paidAt)}</div>` : '<span class="chip chip-danger">Pending</span>'}${summary.carryForward > 0 ? `<div class="small text-muted mt-1">Carry forward: ${formatCurrency(summary.carryForward)}</div>` : ''}</td>
         <td>
           <button class="btn btn-sm ${payment?.paid ? 'btn-soft' : 'btn-primary'}" data-action="toggle-payroll-payment" data-employee-id="${employee.id}" data-period-key="${payrollPeriodKey}" data-paid="${payment?.paid ? 'true' : 'false'}">
             ${payment?.paid ? `Mark ${payrollPeriodLabel} Unpaid` : `Mark ${payrollPeriodLabel} Paid`}
@@ -1157,7 +1227,7 @@ function renderPayrollAdjustments() {
       </tr>`;
   }).join('');
 
-  dom.payrollSummaryTableBody.innerHTML = summaryRows || '<tr><td colspan="9" class="text-center text-muted py-4">No employees found</td></tr>';
+  dom.payrollSummaryTableBody.innerHTML = summaryRows || '<tr><td colspan="10" class="text-center text-muted py-4">No employees found</td></tr>';
 }
 
 function renderBudget() {
@@ -1239,7 +1309,7 @@ function renderStaffPortal() {
     dom.staffCheckOutBtn.title = isAbsentToday ? 'You are recorded as absent today' : '';
   }
 
-  const payroll = getEmployeeDeductions(employee.id);
+  const payroll = getEmployeeDeductions(employee.id, payrollPeriodKey);
   const payrollPayment = getPayrollPayment(employee.id, payrollPeriodKey);
   const tasks = getCurrentEmployeeTasks();
   const reports = getCurrentEmployeeReports();
@@ -1263,13 +1333,16 @@ function renderStaffPortal() {
   dom.staffReportsDetail.textContent = hasSubmittedCurrentWeekReport()
     ? 'Weekly report submitted for the current week.'
     : 'Weekly report not yet submitted for the current week.';
-  dom.staffSalaryValue.textContent = formatCurrency(payroll.finalSalary);
+  dom.staffSalaryValue.textContent = formatCurrency(payroll.payableBalance);
   dom.staffActualSalaryValue.textContent = formatCurrency(payroll.originalSalary);
   if (dom.staffSalaryPeriodLabel) dom.staffSalaryPeriodLabel.textContent = payrollPeriodLabel;
   dom.staffSalaryStatus.textContent = payrollPayment?.paid
     ? `Paid for ${payrollPeriodLabel}${payrollPayment.paidAt ? ` on ${formatDate(payrollPayment.paidAt)}` : ''}`
     : `Pending for ${payrollPeriodLabel}`;
   dom.staffSalaryStatus.className = `badge rounded-pill px-3 py-2 ${payrollPayment?.paid ? 'text-bg-success' : 'text-bg-danger'}`;
+  if (payroll.carryForward > 0 && !payrollPayment?.paid) {
+    dom.staffSalaryStatus.textContent += ` · carry forward ${formatCurrency(payroll.carryForward)}`;
+  }
 
   dom.staffTasksBody.innerHTML = tasks.length
     ? tasks.map((task) => `
@@ -1280,7 +1353,7 @@ function renderStaffPortal() {
         </td>
         <td>${formatDate(task.deadline)}</td>
         <td class="text-end"><span class="chip ${Number(task.completion) === 100 ? 'chip-success' : 'chip-warning'}">${Number(task.completion)}%</span></td>
-        <td>${Number(task.completion) === 100 ? '<span class="chip chip-success">Complete</span>' : '<span class="chip chip-warning">In progress</span>'}</td>
+        <td>${Number(task.completion) === 100 ? '<span class="chip chip-success">Complete</span>' : isTaskOverdue(task) ? '<span class="chip chip-danger">Overdue</span>' : '<span class="chip chip-warning">In progress</span>'}</td>
       </tr>`).join('')
     : '<tr><td colspan="4" class="text-center text-muted py-4">No tasks assigned</td></tr>';
 
