@@ -3,7 +3,6 @@ import { doc, getDoc, getFirestore, onSnapshot, setDoc } from 'https://www.gstat
 
 const SESSION_KEY = 'hr-management-session-v1';
 const LATE_CUTOFF = '07:45';
-const ABSENT_CUTOFF = '12:00'; // Staff not signed in by this time are auto-marked absent
 const CLOSING_TIME = '15:30';
 const firebaseConfig = {
   apiKey: 'AIzaSyDMGBOcLA8xf7dpFlQy4jeLTtWFcHIHUf0',
@@ -44,6 +43,7 @@ const defaultSeed = {
   income: [],
   payrollAdjustments: [],
   payrollPayments: [],
+  missingReportPenalties: [],
   budget: {
     salary: 0,
     operations: 0
@@ -226,6 +226,7 @@ function normalizeDatabase(database) {
     income: Array.isArray(database?.income) ? database.income : [],
     payrollAdjustments: Array.isArray(database?.payrollAdjustments) ? database.payrollAdjustments : [],
     payrollPayments: Array.isArray(database?.payrollPayments) ? database.payrollPayments : [],
+    missingReportPenalties: Array.isArray(database?.missingReportPenalties) ? database.missingReportPenalties : [],
     budget: {
       ...defaultSeed.budget,
       ...(database?.budget || {})
@@ -365,6 +366,7 @@ async function createSeedDatabase() {
     income: defaultSeed.income,
     payrollAdjustments: defaultSeed.payrollAdjustments || [],
     payrollPayments: defaultSeed.payrollPayments || [],
+    missingReportPenalties: defaultSeed.missingReportPenalties || [],
     budget: defaultSeed.budget,
     settings: defaultSeed.settings
   };
@@ -518,6 +520,85 @@ function hasSubmittedCurrentWeekReport() {
   return state.db.reports.some((report) => report.employeeId === employeeId && new Date(report.submittedAt) >= weekStart);
 }
 
+// Returns the ISO date (YYYY-MM-DD) of the Sunday of the current week.
+function getCurrentWeekSundayISO() {
+  const now = new Date();
+  const day = now.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+  const daysToSunday = (7 - day) % 7;
+  const sunday = new Date(now);
+  sunday.setDate(now.getDate() + daysToSunday);
+  sunday.setHours(0, 0, 0, 0);
+  return sunday.toISOString().slice(0, 10);
+}
+
+// Returns true if the employee submitted at least one report during the Mon–Sun week ending on weekSunday.
+function hasSubmittedReportForWeek(employeeId, weekSunday) {
+  const [y, m, d] = weekSunday.split('-').map(Number);
+  const sundayEnd = new Date(y, m - 1, d, 23, 59, 59, 999);
+  const mondayStart = new Date(y, m - 1, d - 6, 0, 0, 0, 0);
+  return state.db.reports.some((report) => {
+    if (report.employeeId !== employeeId) return false;
+    const submitted = new Date(report.submittedAt);
+    return submitted >= mondayStart && submitted <= sundayEnd;
+  });
+}
+
+// Auto-deducts NGN 4,000 from every active employee who missed their weekly report.
+// Runs once per Sunday week; tracks processed weeks in settings to avoid duplicates.
+function processWeeklyMissingReportDeductions() {
+  const FEATURE_START = '2026-05-17';
+  const currentSunday = getCurrentWeekSundayISO();
+  if (currentSunday < FEATURE_START) return;
+
+  const lastProcessed = state.db.settings.missingReportDeductionsProcessedUpTo || null;
+  if (lastProcessed && lastProcessed >= currentSunday) return;
+
+  // Build list of unprocessed Sundays from the start date up to (and including) the current week.
+  const startSunday = lastProcessed
+    ? (() => {
+        const [ly, lm, ld] = lastProcessed.split('-').map(Number);
+        const next = new Date(ly, lm - 1, ld + 7);
+        return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
+      })()
+    : FEATURE_START;
+
+  const sundays = [];
+  const [sy, sm, sd] = startSunday.split('-').map(Number);
+  let cursor = new Date(sy, sm - 1, sd);
+  const [cy, cm, cd] = currentSunday.split('-').map(Number);
+  const currentDate = new Date(cy, cm - 1, cd);
+  while (cursor <= currentDate) {
+    sundays.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`);
+    cursor.setDate(cursor.getDate() + 7);
+  }
+
+  if (sundays.length === 0) return;
+
+  if (!Array.isArray(state.db.missingReportPenalties)) state.db.missingReportPenalties = [];
+  const activeEmployees = state.db.employees.filter((e) => e.active !== false);
+
+  for (const weekSunday of sundays) {
+    for (const employee of activeEmployees) {
+      const alreadyRecorded = state.db.missingReportPenalties.some(
+        (p) => p.employeeId === employee.id && p.weekSunday === weekSunday
+      );
+      if (alreadyRecorded) continue;
+      if (!hasSubmittedReportForWeek(employee.id, weekSunday)) {
+        state.db.missingReportPenalties.push({
+          id: crypto.randomUUID(),
+          employeeId: employee.id,
+          weekSunday,
+          amount: 4000,
+          createdAt: new Date().toISOString()
+        });
+      }
+    }
+  }
+
+  state.db.settings.missingReportDeductionsProcessedUpTo = sundays[sundays.length - 1];
+  saveDatabase();
+}
+
 function getCurrentMonthReportCount() {
   const employeeId = getCurrentEmployeeId();
   if (!employeeId) return 0;
@@ -538,11 +619,6 @@ function setAttendanceLockState(locked) {
   };
 }
 
-// Returns true when the current local time is at or past the noon absent cutoff.
-function isPastAbsentCutoff() {
-  const now = new Date();
-  return now.getHours() * 60 + now.getMinutes() >= timeToMinutes(ABSENT_CUTOFF);
-}
 
 // Returns the attendance record for a given employee on today's date, or null.
 function getTodayAttendanceForEmployee(employeeId) {
@@ -550,31 +626,6 @@ function getTodayAttendanceForEmployee(employeeId) {
   return state.db.attendance.find((item) => item.employeeId === employeeId && item.date === today) || null;
 }
 
-// Checks whether the employee should be auto-marked absent (past noon, no sign-in yet).
-// If so, creates the Absent record, saves to Firestore, and returns true.
-// Returns false if no action was needed.
-function autoMarkAbsentIfNeeded(employee) {
-  if (!employee) return false;
-  if (!isPastAbsentCutoff()) return false;
-
-  const existing = getTodayAttendanceForEmployee(employee.id);
-  if (existing) return false; // Already has a record (present or already marked absent)
-
-  const today = todayISO(0);
-  state.db.attendance.push({
-    id: crypto.randomUUID(),
-    employeeId: employee.id,
-    date: today,
-    status: 'Absent',
-    permission: false,
-    timeIn: '',
-    timeOut: '',
-    autoAbsent: true
-  });
-
-  saveDatabase();
-  return true;
-}
 
 function getPeriodKeyFromDate(value) {
   if (!value) return null;
@@ -664,8 +715,12 @@ function getEmployeePeriodDeductions(employeeId, periodKey) {
     .filter((task) => task.employeeId === employeeId && isInPayrollPeriod(task.deadline, periodKey))
     .reduce((sum, task) => sum + getTaskPenalty(task), 0);
 
+  const missingReportPenalty = (state.db.missingReportPenalties || [])
+    .filter((p) => p.employeeId === employeeId && isInPayrollPeriod(p.weekSunday, periodKey))
+    .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+
   const originalSalary = Number(state.db.employees.find((employee) => employee.id === employeeId)?.salary || 0);
-  const otherDeductions = attendancePenalty + reportPenalty + taskPenalty;
+  const otherDeductions = attendancePenalty + reportPenalty + taskPenalty + missingReportPenalty;
   const loanAndAdvance = payrollAdjustments.loan + payrollAdjustments.advance;
   const grossSalary = originalSalary + payrollAdjustments.bonus;
 
@@ -676,6 +731,7 @@ function getEmployeePeriodDeductions(employeeId, periodKey) {
     attendancePenalty,
     reportPenalty,
     taskPenalty,
+    missingReportPenalty,
     loanAndAdvance,
     otherDeductions,
     totalDeductions: otherDeductions + loanAndAdvance,
@@ -758,6 +814,7 @@ function getStaffDeductionRows(employeeId) {
     { label: 'Carry-in deduction', purpose: 'Outstanding deduction from previous month(s)', amount: summary.carryIn },
     { label: 'Attendance penalty', purpose: 'Late arrival or absence', amount: summary.attendancePenalty },
     { label: 'Report penalty', purpose: 'Weekly report submitted late', amount: summary.reportPenalty },
+    { label: 'Missing report penalty', purpose: 'No report submitted for the week (auto-deducted after Sunday)', amount: summary.missingReportPenalty },
     { label: 'Task penalty', purpose: 'Incomplete or overdue task', amount: summary.taskPenalty },
     { label: 'Loan deduction', purpose: 'Loan collected from salary', amount: summary.loan },
     { label: 'Advance deduction', purpose: 'Salary advance collected from salary', amount: summary.advance },
@@ -818,6 +875,8 @@ function renderDashboard() {
   dom.absentTodayCard.textContent = absentToday;
   dom.totalDeductionsCard.textContent = formatCurrency(totals.deductions);
   dom.netSalaryCard.textContent = formatCurrency(totals.net);
+
+  renderTaskCountdowns();
 
   const attendanceTrend = buildAttendanceTrend();
   const taskData = buildTaskSummary();
@@ -898,7 +957,8 @@ function buildDeductionSummary() {
   return {
     attendance: state.db.attendance.reduce((sum, entry) => sum + getAttendancePenalty(entry), 0),
     reports: state.db.reports.reduce((sum, report) => sum + getReportPenalty(report), 0),
-    tasks: state.db.tasks.reduce((sum, task) => sum + getTaskPenalty(task), 0)
+    tasks: state.db.tasks.reduce((sum, task) => sum + getTaskPenalty(task), 0),
+    missingReports: (state.db.missingReportPenalties || []).reduce((sum, p) => sum + Number(p.amount || 0), 0)
   };
 }
 
@@ -1026,7 +1086,10 @@ function renderAttendance() {
           <td>${late ? '<span class="chip chip-warning">Late</span>' : '<span class="chip chip-neutral">On time</span>'}</td>
           <td>${entry.permission ? '<span class="chip chip-success">Granted</span>' : '<span class="chip chip-neutral">No</span>'}</td>
           <td class="text-end fw-bold">${formatCurrency(penalty)}</td>
-          <td><button class="btn btn-sm btn-outline-secondary" data-action="delete-attendance" data-id="${entry.id}">Remove</button></td>
+          <td>
+            <button class="btn btn-sm btn-soft me-1" data-action="edit-attendance" data-id="${entry.id}">Edit</button>
+            <button class="btn btn-sm btn-outline-secondary" data-action="delete-attendance" data-id="${entry.id}">Remove</button>
+          </td>
         </tr>`;
     }).join('');
 
@@ -1292,9 +1355,6 @@ function renderStaffPortal() {
     return;
   }
 
-  // Silently auto-mark absent when the staff portal is opened after noon without a sign-in.
-  // This ensures the deduction is recorded even if the staff never clicked Sign In.
-  autoMarkAbsentIfNeeded(employee);
 
   const todayRecord = getTodayAttendanceForEmployee(employee.id);
   const isAbsentToday = todayRecord?.status === 'Absent';
@@ -1323,7 +1383,7 @@ function renderStaffPortal() {
   dom.staffAttendanceSummary.textContent = latestAttendance ? formatDate(latestAttendance.date) : 'No logs';
 
   if (isAbsentToday) {
-    dom.staffAttendanceDetail.textContent = 'You were recorded absent for today because you did not sign in before 12:00 noon. An ₦8,000 deduction has been applied. Sign-in is no longer available.';
+    dom.staffAttendanceDetail.textContent = 'You have been recorded as absent today by an administrator. An ₦8,000 deduction has been applied. Sign-in is not available.';
   } else {
     dom.staffAttendanceDetail.textContent = latestAttendance
       ? `Last attendance: ${formatDate(latestAttendance.date)} (${latestAttendance.status}${latestAttendance.timeIn ? `, in ${latestAttendance.timeIn}` : ''}${latestAttendance.timeOut ? `, out ${latestAttendance.timeOut}` : ''})`
@@ -1401,6 +1461,8 @@ function renderStaffPortal() {
         <td><span class="chip ${entry.present ? 'chip-success' : 'chip-danger'}">${entry.present ? 'Present' : 'Absent'}</span></td>
       </tr>`).join('')
     : '<tr><td colspan="2" class="text-center text-muted py-4">No staff records available</td></tr>';
+
+  renderStaffTaskCountdowns();
 }
 
 function renderDerivedViews() {
@@ -1509,10 +1571,19 @@ async function upsertEmployee(event) {
   refreshAll();
 }
 
+function resetAttendanceForm() {
+  dom.attendanceForm.reset();
+  dom.attendanceId.value = '';
+  dom.attendanceDate.value = todayISO(0);
+  dom.attendanceStatus.value = 'Present';
+  dom.attendanceFormTitle.textContent = 'Log Attendance';
+  if (dom.attendanceSubmitBtn) dom.attendanceSubmitBtn.textContent = 'Save Attendance';
+}
+
 function upsertAttendance(event) {
   event.preventDefault();
-  const entry = {
-    id: crypto.randomUUID(),
+  const editId = dom.attendanceId.value;
+  const fields = {
     employeeId: dom.attendanceEmployee.value,
     date: dom.attendanceDate.value,
     status: dom.attendanceStatus.value,
@@ -1521,19 +1592,27 @@ function upsertAttendance(event) {
     timeOut: dom.attendanceTimeOut.value
   };
 
-  const existingIndex = state.db.attendance.findIndex((item) => item.employeeId === entry.employeeId && item.date === entry.date);
-  if (existingIndex >= 0) {
-    state.db.attendance[existingIndex] = { ...state.db.attendance[existingIndex], ...entry, id: state.db.attendance[existingIndex].id };
-    showToast('Attendance updated.', 'success');
+  if (editId) {
+    // Editing an existing record by ID
+    const index = state.db.attendance.findIndex((item) => item.id === editId);
+    if (index >= 0) {
+      state.db.attendance[index] = { ...state.db.attendance[index], ...fields };
+      showToast('Attendance updated.', 'success');
+    }
   } else {
-    state.db.attendance.push(entry);
-    showToast('Attendance logged.', 'success');
+    // New record — upsert by employee + date
+    const existingIndex = state.db.attendance.findIndex((item) => item.employeeId === fields.employeeId && item.date === fields.date);
+    if (existingIndex >= 0) {
+      state.db.attendance[existingIndex] = { ...state.db.attendance[existingIndex], ...fields };
+      showToast('Attendance updated.', 'success');
+    } else {
+      state.db.attendance.push({ id: crypto.randomUUID(), ...fields });
+      showToast('Attendance logged.', 'success');
+    }
   }
 
   saveDatabase();
-  dom.attendanceForm.reset();
-  dom.attendanceDate.value = todayISO(0);
-  dom.attendanceStatus.value = 'Present';
+  resetAttendanceForm();
   refreshAll();
 }
 
@@ -1666,14 +1745,7 @@ function submitStaffAttendance(action) {
     return;
   }
 
-  // Auto-mark absent if past noon and no record yet, then block the action.
-  if (autoMarkAbsentIfNeeded(employee)) {
-    showToast('You have been automatically marked absent. Sign-in is no longer available for today.', 'danger');
-    refreshAll();
-    return;
-  }
-
-  // Block if today's record is already Absent (auto or admin-set).
+  // Block if today's record is already Absent (admin-set).
   const todayRecord = getTodayAttendanceForEmployee(employee.id);
   if (todayRecord && todayRecord.status === 'Absent') {
     showToast('You are recorded as absent today. Sign-in and sign-out are not available.', 'danger');
@@ -1682,14 +1754,6 @@ function submitStaffAttendance(action) {
 
   if (action === 'check-in' && getAttendanceLockState()) {
     showToast('Attendance locked. You are late.', 'danger');
-    return;
-  }
-
-  // Block check-in if past the noon cutoff (they should have been caught above, but guard anyway).
-  if (action === 'check-in' && isPastAbsentCutoff()) {
-    showToast('Sign-in is no longer available after 12:00 noon. You have been marked absent.', 'danger');
-    autoMarkAbsentIfNeeded(employee);
-    refreshAll();
     return;
   }
 
@@ -1805,6 +1869,23 @@ function handleTableActions(event) {
     saveDatabase();
     showToast('Employee deleted.', 'success');
     refreshAll();
+  }
+
+  if (action === 'edit-attendance') {
+    const entry = state.db.attendance.find((item) => item.id === id);
+    if (!entry) return;
+    dom.attendanceId.value = entry.id;
+    dom.attendanceEmployee.value = entry.employeeId;
+    dom.attendanceDate.value = entry.date;
+    dom.attendanceStatus.value = entry.status;
+    dom.attendancePermission.value = entry.permission ? 'Yes' : 'No';
+    dom.attendanceTimeIn.value = entry.timeIn || '';
+    dom.attendanceTimeOut.value = entry.timeOut || '';
+    dom.attendanceFormTitle.textContent = 'Edit Attendance';
+    if (dom.attendanceSubmitBtn) dom.attendanceSubmitBtn.textContent = 'Update Attendance';
+    setActiveView('attendanceView');
+    dom.attendanceForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
   }
 
   if (action === 'edit-task') {
@@ -1968,6 +2049,98 @@ function setupLiveClock() {
 
   updateClock();
   setInterval(updateClock, 1000 * 30);
+  // Tick the task deadline countdowns every second.
+  setInterval(updateCountdownDisplays, 1000);
+}
+
+function renderTaskCountdowns() {
+  const el = dom.taskCountdownGrid;
+  if (!el) return;
+  const tasks = state.db.tasks
+    .filter((t) => Number(t.completion) < 100)
+    .sort((a, b) => String(a.deadline).localeCompare(String(b.deadline)));
+
+  if (tasks.length === 0) {
+    el.innerHTML = '<p class="text-muted text-center py-3">No active tasks.</p>';
+    return;
+  }
+
+  el.innerHTML = tasks.map((task) => {
+    const overdue = isTaskOverdue(task);
+    const employee = state.db.employees.find((e) => e.id === task.employeeId);
+    const pct = Math.min(100, Math.max(0, Number(task.completion) || 0));
+    return `
+      <div class="countdown-tile${overdue ? ' countdown-overdue' : ''}">
+        <div class="countdown-employee">${employee?.fullName || 'Unknown'}</div>
+        <div class="countdown-task" title="${task.title}">${task.title}</div>
+        <div class="countdown-deadline">Due: ${formatDate(task.deadline)}</div>
+        <div class="countdown-timer" data-countdown="${task.deadline}">—</div>
+        <div class="countdown-bar-wrap"><div class="countdown-bar" style="width:${pct}%"></div></div>
+        <div class="countdown-completion">${pct}% complete</div>
+      </div>`;
+  }).join('');
+
+  updateCountdownDisplays();
+}
+
+function renderStaffTaskCountdowns() {
+  const el = dom.staffTaskCountdownGrid;
+  if (!el) return;
+  const employee = getCurrentEmployee();
+  if (!employee) {
+    el.innerHTML = '<p class="text-muted text-center py-3">No active tasks.</p>';
+    return;
+  }
+  const tasks = state.db.tasks
+    .filter((t) => t.employeeId === employee.id && Number(t.completion) < 100)
+    .sort((a, b) => String(a.deadline).localeCompare(String(b.deadline)));
+  if (tasks.length === 0) {
+    el.innerHTML = '<p class="text-muted text-center py-3">No active tasks.</p>';
+    return;
+  }
+  el.innerHTML = tasks.map((task) => {
+    const overdue = isTaskOverdue(task);
+    const pct = Math.min(100, Math.max(0, Number(task.completion) || 0));
+    return `
+      <div class="countdown-tile${overdue ? ' countdown-overdue' : ''}">
+        <div class="countdown-task" title="${task.title}">${task.title}</div>
+        <div class="countdown-deadline">Due: ${formatDate(task.deadline)}</div>
+        <div class="countdown-timer" data-countdown="${task.deadline}">—</div>
+        <div class="countdown-bar-wrap"><div class="countdown-bar" style="width:${pct}%"></div></div>
+        <div class="countdown-completion">${pct}% complete</div>
+      </div>`;
+  }).join('');
+  updateCountdownDisplays();
+}
+
+function updateCountdownDisplays() {
+  document.querySelectorAll('[data-countdown]').forEach((el) => {
+    const deadline = el.dataset.countdown;
+    if (!deadline) return;
+    const [y, m, d] = deadline.split('-').map(Number);
+    const target = new Date(y, m - 1, d, 23, 59, 59, 999);
+    const diff = target - Date.now();
+
+    if (diff <= 0) {
+      el.textContent = 'OVERDUE';
+      el.className = 'countdown-timer time-overdue';
+      return;
+    }
+
+    const days = Math.floor(diff / 86400000);
+    const hours = Math.floor((diff % 86400000) / 3600000);
+    const mins = Math.floor((diff % 3600000) / 60000);
+    const secs = Math.floor((diff % 60000) / 1000);
+    const pad = (n) => String(n).padStart(2, '0');
+
+    el.textContent = days > 0
+      ? `${days}d ${pad(hours)}h ${pad(mins)}m ${pad(secs)}s`
+      : `${pad(hours)}h ${pad(mins)}m ${pad(secs)}s`;
+
+    if (diff < 86400000)           el.className = 'countdown-timer time-urgent';
+    else if (diff < 3 * 86400000) el.className = 'countdown-timer time-soon';
+    else                           el.className = 'countdown-timer time-ok';
+  });
 }
 
 function cacheDom() {
@@ -1981,7 +2154,7 @@ function cacheDom() {
     employeeFormTitle: 'employeeFormTitle', employeeSubmitBtn: 'employeeSubmitBtn', employeeResetBtn: 'employeeResetBtn',
     employeeSearch: 'employeeSearch', employeeTableBody: 'employeeTableBody', attendanceForm: 'attendanceForm', attendanceEmployee: 'attendanceEmployee',
     attendanceDate: 'attendanceDate', attendanceStatus: 'attendanceStatus', attendancePermission: 'attendancePermission', attendanceTimeIn: 'attendanceTimeIn',
-    attendanceTimeOut: 'attendanceTimeOut', attendanceSearch: 'attendanceSearch', attendanceTableBody: 'attendanceTableBody', taskForm: 'taskForm',
+    attendanceTimeOut: 'attendanceTimeOut', attendanceId: 'attendanceId', attendanceFormTitle: 'attendanceFormTitle', attendanceSubmitBtn: 'attendanceSubmitBtn', attendanceResetBtn: 'attendanceResetBtn', attendanceSearch: 'attendanceSearch', attendanceTableBody: 'attendanceTableBody', taskForm: 'taskForm',
     taskId: 'taskId', taskEmployee: 'taskEmployee', taskTitle: 'taskTitle', taskDescription: 'taskDescription', taskDeadline: 'taskDeadline',
     taskProgress: 'taskProgress', taskFormTitle: 'taskFormTitle', taskSearch: 'taskSearch', taskTableBody: 'taskTableBody', taskResetBtn: 'taskResetBtn',
     reportForm: 'reportForm', reportFormTitle: 'reportFormTitle', reportSubmitBtn: 'reportSubmitBtn', reportId: 'reportId', reportEmployee: 'reportEmployee', reportTitle: 'reportTitle', reportContent: 'reportContent', reportSearch: 'reportSearch', staffReportForm: 'staffReportForm', staffReportTitle: 'staffReportTitle', staffReportContent: 'staffReportContent', staffReportSubmitBtn: 'staffReportSubmitBtn',
@@ -1993,7 +2166,9 @@ function cacheDom() {
     budgetOperationsActual: 'budgetOperationsActual', budgetSalaryStatus: 'budgetSalaryStatus', budgetOperationsStatus: 'budgetOperationsStatus', budgetAlerts: 'budgetAlerts',
     staffPortalStatus: 'staffPortalStatus', staffAttendanceSummary: 'staffAttendanceSummary', staffAttendanceDetail: 'staffAttendanceDetail', staffReportsSummary: 'staffReportsSummary', staffReportsDetail: 'staffReportsDetail', staffSalaryValue: 'staffSalaryValue', staffActualSalaryValue: 'staffActualSalaryValue', staffSalaryPeriodLabel: 'staffSalaryPeriodLabel', staffSalaryStatus: 'staffSalaryStatus', staffTasksBody: 'staffTasksBody', staffReportsBody: 'staffReportsBody', staffDeductionsBody: 'staffDeductionsBody', staffDailyAttendanceBody: 'staffDailyAttendanceBody', staffMonthlyReportsBody: 'staffMonthlyReportsBody', staffColleaguesBody: 'staffColleaguesBody', staffCheckInBtn: 'staffCheckInBtn', staffCheckOutBtn: 'staffCheckOutBtn', staffInactiveState: 'staffInactiveState', staffActiveContent: 'staffActiveContent', attendanceLockStatus: 'attendanceLockStatus', attendanceLockBtn: 'attendanceLockBtn', employeeCredentialBox: 'employeeCredentialBox',
     attendanceDateFilter: 'attendanceDateFilter', reportDateFilter: 'reportDateFilter', taskStatusFilter: 'taskStatusFilter', payrollAdjDateFilter: 'payrollAdjDateFilter',
-    toastContainer: 'toastContainer'
+    toastContainer: 'toastContainer',
+    taskCountdownGrid: 'taskCountdownGrid',
+    staffTaskCountdownGrid: 'staffTaskCountdownGrid'
   };
 
   Object.entries(ids).forEach(([key, id]) => {
@@ -2010,6 +2185,7 @@ function bindEvents() {
   dom.attendanceForm.addEventListener('submit', upsertAttendance);
   dom.taskForm.addEventListener('submit', upsertTask);
   dom.taskResetBtn.addEventListener('click', resetTaskForm);
+  if (dom.attendanceResetBtn) dom.attendanceResetBtn.addEventListener('click', resetAttendanceForm);
   dom.reportForm.addEventListener('submit', submitReport);
   if (dom.staffReportForm) dom.staffReportForm.addEventListener('submit', submitReport);
   dom.incomeForm.addEventListener('submit', submitIncome);
@@ -2042,6 +2218,27 @@ async function init() {
   cacheDom();
   setupLiveClock();
   state.db = await loadDatabase();
+
+  // One-time migration: remove all absent records created by the old auto-absent system.
+  if (!state.db.settings.absentRecordsCleared) {
+    state.db.attendance = state.db.attendance.filter((r) => r.status !== 'Absent');
+    state.db.settings.absentRecordsCleared = true;
+    saveDatabase();
+  }
+
+  // One-time migration: remove all attendance records logged on Saturdays or Sundays.
+  if (!state.db.settings.weekendRecordsCleared) {
+    state.db.attendance = state.db.attendance.filter((r) => {
+      const day = new Date(r.date).getDay();
+      return day !== 0 && day !== 6; // 0 = Sunday, 6 = Saturday
+    });
+    state.db.settings.weekendRecordsCleared = true;
+    saveDatabase();
+  }
+
+  // Auto-deduct NGN 4,000 for each employee who missed their weekly report.
+  processWeeklyMissingReportDeductions();
+
   state.session = loadSession();
   bindEvents();
   populatePayrollPeriodFilter();

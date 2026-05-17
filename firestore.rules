@@ -42,7 +42,7 @@ service cloud.firestore {
 
     function isValidSettings(settings) {
       return settings is map
-        && settings.keys().hasOnly(['attendanceLocked', 'attendanceLockedAt', 'attendanceLockedBy'])
+        && settings.keys().hasOnly(['attendanceLocked', 'attendanceLockedAt', 'attendanceLockedBy', 'absentRecordsCleared', 'weekendRecordsCleared', 'missingReportDeductionsProcessedUpTo'])
         && settings.attendanceLocked is bool;
     }
 
@@ -61,6 +61,7 @@ service cloud.firestore {
           'income',
           'payrollAdjustments',
           'payrollPayments',
+          'missingReportPenalties',
           'budget',
           'settings'
         ])
@@ -71,6 +72,7 @@ service cloud.firestore {
         && isSmallList(data.reports, 5000)
         && isSmallList(data.income, 5000)
         && isSmallList(data.payrollAdjustments, 5000)
+        && isSmallList(data.missingReportPenalties, 5000)
         && isValidPayrollPayments(data.payrollPayments)
         && isValidBudget(data.budget)
         && isValidSettings(data.settings);

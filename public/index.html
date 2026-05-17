@@ -84,6 +84,20 @@
 
       <div class="container-fluid px-0">
         <section class="view-panel active" id="dashboardView">
+          <div class="row g-4 mb-4">
+            <div class="col-12">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Task Deadline Countdowns</h3>
+                    <p>Live countdown to each active task deadline.</p>
+                  </div>
+                </div>
+                <div class="countdown-grid" id="taskCountdownGrid"><p class="text-muted text-center py-3">No active tasks.</p></div>
+              </div>
+            </div>
+          </div>
+
           <div class="summary-grid mb-4">
             <div class="summary-card"><span>Total Employees</span><strong id="totalEmployeesCard">0</strong></div>
             <div class="summary-card"><span>Present Today</span><strong id="presentTodayCard">0</strong></div>
@@ -149,6 +163,20 @@
           </div>
 
           <div id="staffActiveContent">
+          <div class="row g-4 mb-4">
+            <div class="col-12">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Your Task Deadlines</h3>
+                    <p>Live countdown to each of your active task deadlines.</p>
+                  </div>
+                </div>
+                <div class="countdown-grid" id="staffTaskCountdownGrid"><p class="text-muted text-center py-3">No active tasks.</p></div>
+              </div>
+            </div>
+          </div>
+
           <div class="row g-4 mb-4">
             <div class="col-12 col-md-4">
               <div class="summary-card h-100"><span>Staff Member</span><strong id="staffPortalStatus">Loading...</strong></div>
@@ -430,11 +458,12 @@
               <div class="panel-card">
                 <div class="panel-header">
                   <div>
-                    <h3>Log Attendance</h3>
+                    <h3 id="attendanceFormTitle">Log Attendance</h3>
                     <p>Track daily presence and time.</p>
                   </div>
                 </div>
                 <form id="attendanceForm" class="stack-form">
+                  <input type="hidden" id="attendanceId">
                   <div>
                     <label class="form-label">Employee</label>
                     <select class="form-select" id="attendanceEmployee" required></select>
@@ -476,7 +505,10 @@
                       <button class="btn btn-sm btn-outline-secondary" type="button" id="attendanceLockBtn">Lock Attendance</button>
                     </div>
                   </div>
-                  <button class="btn btn-primary" type="submit">Save Attendance</button>
+                  <div class="d-flex gap-2">
+                    <button class="btn btn-primary flex-fill" type="submit" id="attendanceSubmitBtn">Save Attendance</button>
+                    <button class="btn btn-outline-secondary" type="button" id="attendanceResetBtn">Reset</button>
+                  </div>
                   <div class="small text-muted">Late arrival is auto-detected after 7:45 AM without permission.</div>
                 </form>
               </div>
