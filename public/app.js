@@ -30,12 +30,16 @@ const defaultSeed = {
       username: 'staff@hr.local',
       position: 'Staff Officer',
       department: 'Operations',
+      officeId: 'off-hq',
       salary: 250000,
       active: true,
       salaryPaid: false,
       salaryPaidAt: null,
       createdAt: new Date().toISOString()
     }
+  ],
+  offices: [
+    { id: 'off-hq', name: 'Lagos Headquarters', latitude: 6.5244, longitude: 3.3792, radius: 100 }
   ],
   attendance: [],
   tasks: [],
@@ -227,6 +231,7 @@ function normalizeDatabase(database) {
     payrollAdjustments: Array.isArray(database?.payrollAdjustments) ? database.payrollAdjustments : [],
     payrollPayments: Array.isArray(database?.payrollPayments) ? database.payrollPayments : [],
     missingReportPenalties: Array.isArray(database?.missingReportPenalties) ? database.missingReportPenalties : [],
+    offices: Array.isArray(database?.offices) ? database.offices : [],
     budget: {
       ...defaultSeed.budget,
       ...(database?.budget || {})
@@ -240,6 +245,12 @@ function normalizeDatabase(database) {
 
 async function prepareDatabase(database) {
   const normalized = normalizeDatabase(database);
+
+  if (!normalized.offices || normalized.offices.length === 0) {
+    normalized.offices = [
+      { id: 'off-hq', name: 'Lagos Headquarters', latitude: 6.5244, longitude: 3.3792, radius: 100 }
+    ];
+  }
 
   if (normalized.users.some((user) => !user.passwordHash)) {
     normalized.users = await Promise.all(normalized.users.map(async (user) => ({
@@ -293,6 +304,7 @@ async function prepareDatabase(database) {
       ...employee,
       email,
       username: email,
+      officeId: employee.officeId || 'off-hq',
       active: employee.active !== false,
       salaryPaid,
       salaryPaidAt
@@ -383,17 +395,17 @@ function saveDatabase() {
 // updates immediately — e.g. an employee signing out is reflected on the admin
 // attendance table without a page refresh.
 function startRealtimeListener() {
+  let latestSnapshotTime = 0;
   onSnapshot(firebaseAppStateRef, (snapshot) => {
     if (!snapshot.exists()) return;
-    const incoming = normalizeDatabase(snapshot.data());
-    // Preserve the in-memory `users` array (prepared with correct password hashes
-    // by loadDatabase) so the listener never overwrites them with raw Firestore
-    // data. All other collections are replaced for real-time sync.
-    state.db = {
-      ...incoming,
-      users: state.db?.users?.length ? state.db.users : incoming.users
-    };
-    if (state.session) refreshAll();
+    const snapshotTime = Date.now();
+    latestSnapshotTime = snapshotTime;
+    const raw = snapshot.data();
+    prepareDatabase(raw).then((incoming) => {
+      if (snapshotTime !== latestSnapshotTime) return;
+      state.db = incoming;
+      if (state.session) refreshAll();
+    });
   });
 }
 
@@ -557,18 +569,22 @@ function processWeeklyMissingReportDeductions() {
   const startSunday = lastProcessed
     ? (() => {
         const [ly, lm, ld] = lastProcessed.split('-').map(Number);
-        const next = new Date(ly, lm - 1, ld + 7);
+        const next = new Date(ly, lm - 1, ld + 7, 12, 0, 0, 0);
         return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
       })()
     : FEATURE_START;
 
   const sundays = [];
   const [sy, sm, sd] = startSunday.split('-').map(Number);
-  let cursor = new Date(sy, sm - 1, sd);
-  const [cy, cm, cd] = currentSunday.split('-').map(Number);
-  const currentDate = new Date(cy, cm - 1, cd);
-  while (cursor <= currentDate) {
-    sundays.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`);
+  let cursor = new Date(sy, sm - 1, sd, 12, 0, 0, 0);
+  const today = todayISO(0);
+  while (true) {
+    const weekSunday = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+    // Only process Sundays that are strictly in the past (before today)
+    if (weekSunday >= today) {
+      break;
+    }
+    sundays.push(weekSunday);
     cursor.setDate(cursor.getDate() + 7);
   }
 
@@ -583,6 +599,11 @@ function processWeeklyMissingReportDeductions() {
         (p) => p.employeeId === employee.id && p.weekSunday === weekSunday
       );
       if (alreadyRecorded) continue;
+
+      // Prevent retroactive penalization for weeks ending before employee's creation date.
+      const employeeCreatedDate = employee.createdAt ? employee.createdAt.slice(0, 10) : '';
+      if (employeeCreatedDate && weekSunday < employeeCreatedDate) continue;
+
       if (!hasSubmittedReportForWeek(employee.id, weekSunday)) {
         state.db.missingReportPenalties.push({
           id: crypto.randomUUID(),
@@ -643,7 +664,7 @@ function periodKeyToDate(periodKey) {
   if (!periodKey) return null;
   const [year, month] = String(periodKey).split('-').map(Number);
   if (!year || !month) return null;
-  return new Date(year, month - 1, 1);
+  return new Date(year, month - 1, 1, 12, 0, 0, 0);
 }
 
 function getPayrollAdjustmentSummary(employeeId, periodKey = null) {
@@ -688,6 +709,7 @@ function isLateReport(report) {
 }
 
 function getReportPenalty(report) {
+  if (report?.permission) return 0;
   return isLateReport(report) ? 2000 : 0;
 }
 
@@ -698,6 +720,7 @@ function isTaskOverdue(task, referenceDate = todayISO(0)) {
 }
 
 function getTaskPenalty(task) {
+  if (task?.permission) return 0;
   return isTaskOverdue(task) ? 3000 : 0;
 }
 
@@ -717,7 +740,7 @@ function getEmployeePeriodDeductions(employeeId, periodKey) {
 
   const missingReportPenalty = (state.db.missingReportPenalties || [])
     .filter((p) => p.employeeId === employeeId && isInPayrollPeriod(p.weekSunday, periodKey))
-    .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    .reduce((sum, p) => sum + (p.permission ? 0 : Number(p.amount || 0)), 0);
 
   const originalSalary = Number(state.db.employees.find((employee) => employee.id === employeeId)?.salary || 0);
   const otherDeductions = attendancePenalty + reportPenalty + taskPenalty + missingReportPenalty;
@@ -748,8 +771,8 @@ function getCarryBalanceBeforePeriod(employeeId, periodKey) {
 
   const createdAtDate = employee.createdAt ? new Date(employee.createdAt) : null;
   const startDate = createdAtDate && !Number.isNaN(createdAtDate.getTime())
-    ? new Date(createdAtDate.getFullYear(), createdAtDate.getMonth(), 1)
-    : new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
+    ? new Date(createdAtDate.getFullYear(), createdAtDate.getMonth(), 1, 12, 0, 0, 0)
+    : new Date(targetDate.getFullYear(), targetDate.getMonth(), 1, 12, 0, 0, 0);
 
   if (startDate > targetDate) return 0;
 
@@ -796,14 +819,23 @@ function getPayrollTotals() {
   }, { original: 0, deductions: 0, bonuses: 0, net: 0, salaryActual: 0 });
 }
 
-function getOperationsActual() {
+function getOperationsActual(periodKey = getSelectedPayrollPeriodKey()) {
   const totalExpense = state.db.income
-    .filter((entry) => entry.type === 'Expense' && !isSalaryCategory(entry.category))
+    .filter((entry) => entry.type === 'Expense' && !isSalaryCategory(entry.category) && isInPayrollPeriod(entry.date, periodKey))
     .reduce((sum, entry) => sum + Number(entry.amount), 0);
 
-  const penalties = state.db.attendance.reduce((sum, entry) => sum + getAttendancePenalty(entry), 0)
-    + state.db.reports.reduce((sum, report) => sum + getReportPenalty(report), 0)
-    + state.db.tasks.reduce((sum, task) => sum + getTaskPenalty(task), 0);
+  const penalties = state.db.attendance
+      .filter((entry) => isInPayrollPeriod(entry.date, periodKey))
+      .reduce((sum, entry) => sum + getAttendancePenalty(entry), 0)
+    + state.db.reports
+      .filter((report) => isInPayrollPeriod(report.submittedAt, periodKey))
+      .reduce((sum, report) => sum + getReportPenalty(report), 0)
+    + state.db.tasks
+      .filter((task) => isInPayrollPeriod(task.deadline, periodKey))
+      .reduce((sum, task) => sum + getTaskPenalty(task), 0)
+    + (state.db.missingReportPenalties || [])
+      .filter((p) => isInPayrollPeriod(p.weekSunday, periodKey))
+      .reduce((sum, p) => sum + (p.permission ? 0 : Number(p.amount || 0)), 0);
 
   return totalExpense + penalties;
 }
@@ -888,8 +920,8 @@ function renderDashboard() {
     data: {
       labels: attendanceTrend.labels,
       datasets: [
-        { label: 'Present', data: attendanceTrend.present, borderColor: '#6ee7d8', backgroundColor: 'rgba(110, 231, 216, 0.18)', tension: 0.35, fill: true },
-        { label: 'Absent', data: attendanceTrend.absent, borderColor: '#ff7a7a', backgroundColor: 'rgba(255, 122, 122, 0.18)', tension: 0.35, fill: true }
+        { label: 'Present', data: attendanceTrend.present, borderColor: '#10b981', borderWidth: 3.5, glowGradient: 'emerald', tension: 0.35, fill: true },
+        { label: 'Absent', data: attendanceTrend.absent, borderColor: '#ef4444', borderWidth: 3.5, glowGradient: 'rose', tension: 0.35, fill: true }
       ]
     },
     options: chartOptions('line')
@@ -899,7 +931,7 @@ function renderDashboard() {
     type: 'doughnut',
     data: {
       labels: ['Complete', 'Incomplete'],
-      datasets: [{ data: [taskData.complete, taskData.incomplete], backgroundColor: ['#7ee787', '#ffd166'], borderWidth: 0 }]
+      datasets: [{ data: [taskData.complete, taskData.incomplete], backgroundColor: ['#10b981', '#f59e0b'], borderWidth: 4, borderColor: '#0b0f19' }]
     },
     options: chartOptions('doughnut')
   });
@@ -908,7 +940,14 @@ function renderDashboard() {
     type: 'bar',
     data: {
       labels: ['Attendance', 'Reports', 'Tasks'],
-      datasets: [{ label: 'NGN', data: [deductionData.attendance, deductionData.reports, deductionData.tasks], backgroundColor: ['#6ee7d8', '#ffd166', '#ff7a7a'] }]
+      datasets: [{ 
+        label: 'NGN', 
+        data: [deductionData.attendance, deductionData.reports, deductionData.tasks], 
+        backgroundColor: ['rgba(6, 182, 212, 0.75)', 'rgba(245, 158, 11, 0.75)', 'rgba(239, 68, 68, 0.75)'],
+        borderColor: 'rgba(255, 255, 255, 0.1)',
+        borderWidth: 1,
+        borderRadius: 8
+      }]
     },
     options: chartOptions('bar')
   });
@@ -918,9 +957,9 @@ function renderDashboard() {
     data: {
       labels: financeData.labels,
       datasets: [
-        { label: 'Revenue', data: financeData.revenue, borderColor: '#6ee7d8', tension: 0.35 },
-        { label: 'Expenses', data: financeData.expenses, borderColor: '#ff7a7a', tension: 0.35 },
-        { label: 'Profit', data: financeData.profit, borderColor: '#ffd166', tension: 0.35 }
+        { label: 'Revenue', data: financeData.revenue, borderColor: '#10b981', borderWidth: 3, glowGradient: 'emerald', tension: 0.35, fill: true },
+        { label: 'Expenses', data: financeData.expenses, borderColor: '#ef4444', borderWidth: 3, glowGradient: 'rose', tension: 0.35, fill: true },
+        { label: 'Profit', data: financeData.profit, borderColor: '#8b5cf6', borderWidth: 3.5, glowGradient: 'violet', tension: 0.35, fill: true }
       ]
     },
     options: chartOptions('line')
@@ -992,6 +1031,59 @@ function updateChart(chartKey, config) {
     state.charts[chartKey].destroy();
   }
 
+  const ctx = canvas.getContext('2d');
+  
+  if (config.data && config.data.datasets) {
+    config.data.datasets.forEach((dataset) => {
+      if (dataset.glowGradient === 'violet') {
+        const grad = ctx.createLinearGradient(0, 0, 0, 260);
+        grad.addColorStop(0, 'rgba(139, 92, 246, 0.4)');
+        grad.addColorStop(1, 'rgba(139, 92, 246, 0.01)');
+        dataset.backgroundColor = grad;
+      }
+      if (dataset.glowGradient === 'cyan') {
+        const grad = ctx.createLinearGradient(0, 0, 0, 260);
+        grad.addColorStop(0, 'rgba(6, 182, 212, 0.4)');
+        grad.addColorStop(1, 'rgba(6, 182, 212, 0.01)');
+        dataset.backgroundColor = grad;
+      }
+      if (dataset.glowGradient === 'emerald') {
+        const grad = ctx.createLinearGradient(0, 0, 0, 260);
+        grad.addColorStop(0, 'rgba(16, 185, 129, 0.4)');
+        grad.addColorStop(1, 'rgba(16, 185, 129, 0.01)');
+        dataset.backgroundColor = grad;
+      }
+      if (dataset.glowGradient === 'rose') {
+        const grad = ctx.createLinearGradient(0, 0, 0, 260);
+        grad.addColorStop(0, 'rgba(239, 68, 68, 0.4)');
+        grad.addColorStop(1, 'rgba(239, 68, 68, 0.01)');
+        dataset.backgroundColor = grad;
+      }
+      if (dataset.glowGradient === 'amber') {
+        const grad = ctx.createLinearGradient(0, 0, 0, 260);
+        grad.addColorStop(0, 'rgba(245, 158, 11, 0.4)');
+        grad.addColorStop(1, 'rgba(245, 158, 11, 0.01)');
+        dataset.backgroundColor = grad;
+      }
+    });
+  }
+
+  if (!config.plugins) config.plugins = [];
+  config.plugins.push({
+    id: 'shadow-3d',
+    beforeDatasetDraw: (chart) => {
+      const c = chart.ctx;
+      c.save();
+      c.shadowColor = 'rgba(0, 0, 0, 0.45)';
+      c.shadowBlur = 10;
+      c.shadowOffsetX = 3;
+      c.shadowOffsetY = 5;
+    },
+    afterDatasetDraw: (chart) => {
+      chart.ctx.restore();
+    }
+  });
+
   state.charts[chartKey] = new Chart(canvas, config);
 }
 
@@ -1033,6 +1125,7 @@ function renderEmployees() {
     const payroll = getEmployeeDeductions(employee.id, payrollPeriodKey);
     const payrollPayment = getPayrollPayment(employee.id, payrollPeriodKey);
     const active = isEmployeeActive(employee);
+    const office = (state.db.offices || []).find((o) => o.id === employee.officeId) || { name: 'Headquarters' };
     return `
       <tr>
         <td><strong>${employee.id}</strong></td>
@@ -1041,6 +1134,7 @@ function renderEmployees() {
         <td>${employee.username || '—'}</td>
         <td>${employee.position}</td>
         <td>${employee.department}</td>
+        <td>${office.name}</td>
         <td>${payrollPayment?.paid ? `<span class="chip chip-success">Paid ${payrollPeriodLabel}</span>` : `<span class="chip chip-danger">Pending ${payrollPeriodLabel}</span>`}</td>
         <td class="text-end">${formatCurrency(employee.salary)}</td>
         <td>
@@ -1094,9 +1188,9 @@ function renderAttendance() {
     }).join('');
 
   dom.attendanceTableBody.innerHTML = rows || `<tr><td colspan="9" class="text-center text-muted py-4">${query ? 'No attendance logs found.' : 'No attendance records for today. Use the date filter or search to view other dates.'}</td></tr>`;
-  if (dom.attendanceLockStatus) {
-    dom.attendanceLockStatus.textContent = getAttendanceLockState() ? 'Locked' : 'Open';
-    dom.attendanceLockStatus.className = `badge rounded-pill ${getAttendanceLockState() ? 'text-bg-danger' : 'text-bg-success'} px-3 py-2`;
+  if (dom.adminAttendanceLockStatus) {
+    dom.adminAttendanceLockStatus.textContent = getAttendanceLockState() ? 'Locked' : 'Open';
+    dom.adminAttendanceLockStatus.className = `badge rounded-pill ${getAttendanceLockState() ? 'text-bg-danger' : 'text-bg-success'} px-3 py-2`;
   }
   if (dom.attendanceLockBtn) {
     dom.attendanceLockBtn.textContent = getAttendanceLockState() ? 'Unlock Attendance' : 'Lock Attendance';
@@ -1129,6 +1223,7 @@ function renderTasks() {
           <td>${formatDate(task.deadline)}</td>
           <td class="text-end"><span class="chip ${progressClass}">${Number(task.completion)}%</span></td>
           <td>${Number(task.completion) === 100 ? '<span class="chip chip-success">Complete</span>' : overdue ? '<span class="chip chip-danger">Overdue</span>' : '<span class="chip chip-warning">Incomplete</span>'}</td>
+          <td>${task.permission ? '<span class="chip chip-success">Granted</span>' : '<span class="chip chip-neutral">No</span>'}</td>
           <td class="text-end fw-bold">${formatCurrency(penalty)}</td>
           <td>
             <button class="btn btn-sm btn-soft me-1" data-action="edit-task" data-id="${task.id}">Edit</button>
@@ -1137,7 +1232,7 @@ function renderTasks() {
         </tr>`;
     }).join('');
 
-  dom.taskTableBody.innerHTML = rows || `<tr><td colspan="7" class="text-center text-muted py-4">${showAll || query ? 'No tasks found.' : 'No active tasks. Switch to "All tasks" to view completed ones.'}</td></tr>`;
+  dom.taskTableBody.innerHTML = rows || `<tr><td colspan="8" class="text-center text-muted py-4">${showAll || query ? 'No tasks found.' : 'No active tasks. Switch to "All tasks" to view completed ones.'}</td></tr>`;
 }
 
 function renderReports() {
@@ -1166,6 +1261,7 @@ function renderReports() {
             <div class="small text-muted">${report.content.slice(0, 80)}${report.content.length > 80 ? '...' : ''}</div>
           </td>
           <td>${late ? '<span class="chip chip-danger">Late</span>' : '<span class="chip chip-success">On time</span>'}</td>
+          <td>${report.permission ? '<span class="chip chip-success">Granted</span>' : '<span class="chip chip-neutral">No</span>'}</td>
           <td class="text-end fw-bold">${formatCurrency(penalty)}</td>
           <td>
             <button class="btn btn-sm btn-soft me-1" data-action="edit-report" data-id="${report.id}">Edit</button>
@@ -1174,7 +1270,32 @@ function renderReports() {
         </tr>`;
     }).join('');
 
-  dom.reportTableBody.innerHTML = rows || `<tr><td colspan="6" class="text-center text-muted py-4">${query ? 'No reports found.' : 'No reports submitted today. Use the date filter or search to view other dates.'}</td></tr>`;
+  dom.reportTableBody.innerHTML = rows || `<tr><td colspan="7" class="text-center text-muted py-4">${query ? 'No reports found.' : 'No reports submitted today. Use the date filter or search to view other dates.'}</td></tr>`;
+}
+
+function renderMissingReportPenalties() {
+  const tableBody = dom.missingReportPenaltiesTableBody;
+  if (!tableBody) return;
+
+  const rows = [...(state.db.missingReportPenalties || [])]
+    .sort((left, right) => new Date(right.weekSunday) - new Date(left.weekSunday))
+    .map((penalty) => {
+      return `
+        <tr>
+          <td>${formatDate(penalty.weekSunday)}</td>
+          <td>${getEmployeeName(penalty.employeeId)}</td>
+          <td class="text-end fw-bold">${formatCurrency(penalty.amount)}</td>
+          <td>${penalty.permission ? '<span class="chip chip-success">Granted (Waived)</span>' : '<span class="chip chip-neutral">No</span>'}</td>
+          <td>
+            <button class="btn btn-sm ${penalty.permission ? 'btn-soft' : 'btn-primary'} me-1" data-action="toggle-missing-report-permission" data-id="${penalty.id}">
+              ${penalty.permission ? 'Revoke' : 'Grant'}
+            </button>
+            <button class="btn btn-sm btn-outline-secondary" data-action="delete-missing-report-penalty" data-id="${penalty.id}">Remove</button>
+          </td>
+        </tr>`;
+    }).join('');
+
+  tableBody.innerHTML = rows || '<tr><td colspan="5" class="text-center text-muted py-4">No missing report penalties recorded.</td></tr>';
 }
 
 function renderFinance() {
@@ -1332,6 +1453,11 @@ function renderStaffPortal() {
   if (dom.staffInactiveState) dom.staffInactiveState.classList.toggle('d-none', !inactive);
   if (dom.staffActiveContent) dom.staffActiveContent.classList.toggle('d-none', inactive);
 
+  if (dom.staffAttendanceLockStatus) {
+    dom.staffAttendanceLockStatus.textContent = getAttendanceLockState() ? 'Locked' : 'Open';
+    dom.staffAttendanceLockStatus.className = `badge rounded-pill ${getAttendanceLockState() ? 'text-bg-danger' : 'text-bg-success'} px-3 py-2`;
+  }
+
   if (inactive) {
     return;
   }
@@ -1478,7 +1604,7 @@ function renderDerivedViews() {
 
 function configureRoleUi() {
   const staffMode = isStaffSession();
-  const adminOnlyViews = ['dashboardView', 'employeesView', 'attendanceView', 'tasksView', 'reportsView', 'financeView', 'payrollView', 'budgetView'];
+  const adminOnlyViews = ['dashboardView', 'employeesView', 'attendanceView', 'tasksView', 'reportsView', 'financeView', 'payrollView', 'budgetView', 'officesView'];
   const staffViews = ['staffView'];
 
   document.querySelectorAll('#sidebarNav [data-view]').forEach((button) => {
@@ -1506,6 +1632,9 @@ function resetEmployeeForm() {
   dom.employeeForm.reset();
   dom.employeeId.value = '';
   dom.employeeEmail.value = '';
+  if (dom.employeeOffice && dom.employeeOffice.options.length) {
+    dom.employeeOffice.selectedIndex = 0;
+  }
   dom.employeeFormTitle.textContent = 'Add Employee';
   dom.employeeSubmitBtn.textContent = 'Save Employee';
   if (dom.employeeCredentialBox) {
@@ -1518,6 +1647,7 @@ function resetTaskForm() {
   dom.taskForm.reset();
   dom.taskId.value = '';
   dom.taskProgress.value = 10;
+  if (dom.taskPermission) dom.taskPermission.value = 'No';
   dom.taskFormTitle.textContent = 'Assign Task';
 }
 
@@ -1538,6 +1668,7 @@ async function upsertEmployee(event) {
     username: credentials.username,
     position: dom.employeePosition.value.trim(),
     department: dom.employeeDepartment.value.trim(),
+    officeId: dom.employeeOffice.value,
     salary: Number(dom.employeeSalary.value),
     active: existingEmployee ? existingEmployee.active !== false : true
   };
@@ -1625,6 +1756,7 @@ function upsertTask(event) {
     description: dom.taskDescription.value.trim(),
     deadline: dom.taskDeadline.value,
     completion: Number(dom.taskProgress.value),
+    permission: dom.taskPermission.value === 'Yes',
     createdAt: new Date().toISOString()
   };
 
@@ -1646,6 +1778,7 @@ function resetReportForm() {
   if (dom.reportForm) dom.reportForm.reset();
   if (dom.staffReportForm) dom.staffReportForm.reset();
   if (dom.reportId) dom.reportId.value = '';
+  if (dom.reportPermission) dom.reportPermission.value = 'No';
   if (dom.reportFormTitle) dom.reportFormTitle.textContent = 'Weekly Report Submission';
   if (dom.reportSubmitBtn) dom.reportSubmitBtn.textContent = 'Submit Report';
   if (dom.staffReportSubmitBtn) dom.staffReportSubmitBtn.textContent = 'Submit Report';
@@ -1671,6 +1804,7 @@ function submitReport(event) {
     employeeId,
     title,
     content,
+    permission: isStaffForm ? false : (dom.reportPermission.value === 'Yes'),
     submittedAt: existing?.submittedAt || new Date().toISOString(),
     updatedAt: existing ? new Date().toISOString() : null,
     updatedBy: state.session?.email || state.session?.name || null
@@ -1738,28 +1872,91 @@ function submitPayrollAdjustment(event) {
   refreshAll();
 }
 
-function submitStaffAttendance(action) {
+function getBrowserLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('Geolocation is not supported by your browser.'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => resolve(position),
+      (error) => reject(error),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  });
+}
+
+function getDistanceMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371e3; // Earth radius in meters
+  const phi1 = lat1 * Math.PI / 180;
+  const phi2 = lat2 * Math.PI / 180;
+  const deltaPhi = (lat2 - lat1) * Math.PI / 180;
+  const deltaLambda = (lon2 - lon1) * Math.PI / 180;
+
+  const a = Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
+            Math.cos(phi1) * Math.cos(phi2) *
+            Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c;
+}
+
+async function submitStaffAttendance(action) {
   const employee = getCurrentEmployee();
   if (!employee) {
     showToast('No staff profile is linked to this account.', 'danger');
     return;
   }
 
-  // Block if today's record is already Absent (admin-set).
   const todayRecord = getTodayAttendanceForEmployee(employee.id);
   if (todayRecord && todayRecord.status === 'Absent') {
     showToast('You are recorded as absent today. Sign-in and sign-out are not available.', 'danger');
     return;
   }
 
-  if (action === 'check-in' && getAttendanceLockState()) {
-    showToast('Attendance locked. You are late.', 'danger');
-    return;
+  if (action === 'check-in') {
+    if (getAttendanceLockState()) {
+      showToast('Attendance locked. You are late.', 'danger');
+      return;
+    }
+
+    const officeId = employee.officeId || 'off-hq';
+    const office = (state.db.offices || []).find((o) => o.id === officeId);
+    if (!office) {
+      showToast('No office location configuration found for your account. Please contact Admin.', 'danger');
+      return;
+    }
+
+    showToast('Verifying GPS location, please wait...', 'warning');
+
+    try {
+      const position = await getBrowserLocation();
+      const userLat = position.coords.latitude;
+      const userLon = position.coords.longitude;
+      const accuracy = position.coords.accuracy;
+
+      const distance = getDistanceMeters(userLat, userLon, office.latitude, office.longitude);
+      
+      if (distance > office.radius) {
+        showToast(`Clock-in denied. You are outside the office radius (Distance: ${Math.round(distance)}m, Limit: ${office.radius}m).`, 'danger');
+        return;
+      }
+      
+      state.lastCheckInLocation = { latitude: userLat, longitude: userLon, accuracy };
+      showToast(`Location verified. Distance to office: ${Math.round(distance)}m.`, 'success');
+    } catch (err) {
+      console.error(err);
+      showToast('Check-in failed. Please grant browser location access and try again.', 'danger');
+      return;
+    }
   }
 
   const today = todayISO(0);
   const now = new Date().toTimeString().slice(0, 5);
   const existingIndex = state.db.attendance.findIndex((item) => item.employeeId === employee.id && item.date === today);
+
+  const telemetry = state.lastCheckInLocation || {};
+  delete state.lastCheckInLocation;
 
   if (existingIndex >= 0) {
     const existing = state.db.attendance[existingIndex];
@@ -1770,7 +1967,10 @@ function submitStaffAttendance(action) {
       status: 'Present',
       permission: existing.permission || false,
       timeIn: action === 'check-in' ? (existing.timeIn || now) : existing.timeIn,
-      timeOut: action === 'check-out' ? now : existing.timeOut
+      timeOut: action === 'check-out' ? now : existing.timeOut,
+      latitude: action === 'check-in' ? (telemetry.latitude || existing.latitude || null) : existing.latitude,
+      longitude: action === 'check-in' ? (telemetry.longitude || existing.longitude || null) : existing.longitude,
+      accuracy: action === 'check-in' ? (telemetry.accuracy || existing.accuracy || null) : existing.accuracy
     };
   } else {
     state.db.attendance.push({
@@ -1780,7 +1980,10 @@ function submitStaffAttendance(action) {
       status: 'Present',
       permission: false,
       timeIn: action === 'check-in' ? now : '',
-      timeOut: action === 'check-out' ? now : ''
+      timeOut: action === 'check-out' ? now : '',
+      latitude: telemetry.latitude || null,
+      longitude: telemetry.longitude || null,
+      accuracy: telemetry.accuracy || null
     });
   }
 
@@ -1827,6 +2030,7 @@ function handleTableActions(event) {
     dom.employeeEmail.value = employee.email || '';
     dom.employeePosition.value = employee.position;
     dom.employeeDepartment.value = employee.department;
+    if (dom.employeeOffice) dom.employeeOffice.value = employee.officeId || 'off-hq';
     dom.employeeSalary.value = employee.salary;
     dom.employeeFormTitle.textContent = `Edit ${employee.id}`;
     dom.employeeSubmitBtn.textContent = 'Update Employee';
@@ -1897,6 +2101,7 @@ function handleTableActions(event) {
     dom.taskDescription.value = task.description;
     dom.taskDeadline.value = task.deadline;
     dom.taskProgress.value = task.completion;
+    if (dom.taskPermission) dom.taskPermission.value = task.permission ? 'Yes' : 'No';
     dom.taskFormTitle.textContent = 'Edit Task';
     setActiveView('tasksView');
   }
@@ -1929,9 +2134,53 @@ function handleTableActions(event) {
     dom.reportEmployee.value = report.employeeId;
     dom.reportTitle.value = report.title;
     dom.reportContent.value = report.content;
+    if (dom.reportPermission) dom.reportPermission.value = report.permission ? 'Yes' : 'No';
     if (dom.reportFormTitle) dom.reportFormTitle.textContent = 'Edit Weekly Report';
     if (dom.reportSubmitBtn) dom.reportSubmitBtn.textContent = 'Update Report';
     setActiveView('reportsView');
+  }
+
+  if (action === 'toggle-missing-report-permission') {
+    const penalty = state.db.missingReportPenalties.find((item) => item.id === id);
+    if (!penalty) return;
+    penalty.permission = !penalty.permission;
+    saveDatabase();
+    showToast(penalty.permission ? 'Missing report penalty waived.' : 'Missing report penalty reinstated.', 'success');
+    refreshAll();
+  }
+
+  if (action === 'delete-missing-report-penalty') {
+    if (!confirm('Remove this missing report penalty record?')) return;
+    state.db.missingReportPenalties = state.db.missingReportPenalties.filter((item) => item.id !== id);
+    saveDatabase();
+    showToast('Penalty record removed.', 'success');
+    refreshAll();
+  }
+
+  if (action === 'edit-office') {
+    const office = state.db.offices.find((o) => o.id === id);
+    if (!office) return;
+    dom.officeId.value = office.id;
+    dom.officeName.value = office.name;
+    dom.officeLatitude.value = office.latitude;
+    dom.officeLongitude.value = office.longitude;
+    dom.officeRadius.value = office.radius;
+    dom.officeFormTitle.textContent = 'Edit Office';
+    if (dom.officeSubmitBtn) dom.officeSubmitBtn.textContent = 'Update Office';
+    setActiveView('officesView');
+  }
+
+  if (action === 'delete-office') {
+    const assigned = state.db.employees.filter((emp) => emp.officeId === id);
+    if (assigned.length > 0) {
+      alert(`Cannot delete office. There are ${assigned.length} employee(s) assigned to this office. Please reassign them first.`);
+      return;
+    }
+    if (!confirm('Are you sure you want to delete this office?')) return;
+    state.db.offices = state.db.offices.filter((o) => o.id !== id);
+    saveDatabase();
+    showToast('Office configuration deleted.', 'success');
+    refreshAll();
   }
 
   if (action === 'delete-income') {
@@ -1975,16 +2224,46 @@ function handleTableActions(event) {
   }
 }
 
+function init3DTilt() {
+  const cards = document.querySelectorAll('.summary-card, .mini-metric, .countdown-tile, .auth-card, .budget-card, .compact-chart-card');
+  cards.forEach((card) => {
+    if (card.dataset.tiltBound) return;
+    card.dataset.tiltBound = 'true';
+
+    card.addEventListener('mousemove', (e) => {
+      const rect = card.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+      
+      const rotateX = ((centerY - y) / centerY) * 8;
+      const rotateY = ((x - centerX) / centerX) * 8;
+
+      card.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale3d(1.02, 1.02, 1.02)`;
+    });
+
+    card.addEventListener('mouseleave', () => {
+      card.style.transform = 'perspective(1000px) rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)';
+    });
+  });
+}
+
 function refreshAll() {
   renderEmployees();
   renderAttendance();
   renderTasks();
   renderReports();
+  renderMissingReportPenalties();
   renderFinance();
   renderPayrollAdjustments();
   renderBudget();
   renderDashboard();
   renderStaffPortal();
+  renderOffices();
+  
+  requestAnimationFrame(init3DTilt);
 }
 
 async function handleLogin(event) {
@@ -2070,7 +2349,7 @@ function renderTaskCountdowns() {
     const employee = state.db.employees.find((e) => e.id === task.employeeId);
     const pct = Math.min(100, Math.max(0, Number(task.completion) || 0));
     return `
-      <div class="countdown-tile${overdue ? ' countdown-overdue' : ''}">
+      <div class="countdown-tile${overdue ? '  countdown-overdue' : ''} interactive-3d-card">
         <div class="countdown-employee">${employee?.fullName || 'Unknown'}</div>
         <div class="countdown-task" title="${task.title}">${task.title}</div>
         <div class="countdown-deadline">Due: ${formatDate(task.deadline)}</div>
@@ -2102,7 +2381,7 @@ function renderStaffTaskCountdowns() {
     const overdue = isTaskOverdue(task);
     const pct = Math.min(100, Math.max(0, Number(task.completion) || 0));
     return `
-      <div class="countdown-tile${overdue ? ' countdown-overdue' : ''}">
+      <div class="countdown-tile${overdue ? '  countdown-overdue' : ''} interactive-3d-card">
         <div class="countdown-task" title="${task.title}">${task.title}</div>
         <div class="countdown-deadline">Due: ${formatDate(task.deadline)}</div>
         <div class="countdown-timer" data-countdown="${task.deadline}">—</div>
@@ -2151,29 +2430,97 @@ function cacheDom() {
     totalEmployeesCard: 'totalEmployeesCard', presentTodayCard: 'presentTodayCard', absentTodayCard: 'absentTodayCard',
     totalDeductionsCard: 'totalDeductionsCard', netSalaryCard: 'netSalaryCard', employeeForm: 'employeeForm', employeeId: 'employeeId',
     employeeName: 'employeeName', employeeEmail: 'employeeEmail', employeePosition: 'employeePosition', employeeDepartment: 'employeeDepartment', employeeSalary: 'employeeSalary',
-    employeeFormTitle: 'employeeFormTitle', employeeSubmitBtn: 'employeeSubmitBtn', employeeResetBtn: 'employeeResetBtn',
+    employeeFormTitle: 'employeeFormTitle', employeeSubmitBtn: 'employeeSubmitBtn', employeeResetBtn: 'employeeResetBtn', employeeOffice: 'employeeOffice',
     employeeSearch: 'employeeSearch', employeeTableBody: 'employeeTableBody', attendanceForm: 'attendanceForm', attendanceEmployee: 'attendanceEmployee',
     attendanceDate: 'attendanceDate', attendanceStatus: 'attendanceStatus', attendancePermission: 'attendancePermission', attendanceTimeIn: 'attendanceTimeIn',
     attendanceTimeOut: 'attendanceTimeOut', attendanceId: 'attendanceId', attendanceFormTitle: 'attendanceFormTitle', attendanceSubmitBtn: 'attendanceSubmitBtn', attendanceResetBtn: 'attendanceResetBtn', attendanceSearch: 'attendanceSearch', attendanceTableBody: 'attendanceTableBody', taskForm: 'taskForm',
     taskId: 'taskId', taskEmployee: 'taskEmployee', taskTitle: 'taskTitle', taskDescription: 'taskDescription', taskDeadline: 'taskDeadline',
-    taskProgress: 'taskProgress', taskFormTitle: 'taskFormTitle', taskSearch: 'taskSearch', taskTableBody: 'taskTableBody', taskResetBtn: 'taskResetBtn',
-    reportForm: 'reportForm', reportFormTitle: 'reportFormTitle', reportSubmitBtn: 'reportSubmitBtn', reportId: 'reportId', reportEmployee: 'reportEmployee', reportTitle: 'reportTitle', reportContent: 'reportContent', reportSearch: 'reportSearch', staffReportForm: 'staffReportForm', staffReportTitle: 'staffReportTitle', staffReportContent: 'staffReportContent', staffReportSubmitBtn: 'staffReportSubmitBtn',
-    reportTableBody: 'reportTableBody', incomeForm: 'incomeForm', incomeType: 'incomeType', incomeCategory: 'incomeCategory', incomeAmount: 'incomeAmount',
+    taskProgress: 'taskProgress', taskPermission: 'taskPermission', taskFormTitle: 'taskFormTitle', taskSearch: 'taskSearch', taskTableBody: 'taskTableBody', taskResetBtn: 'taskResetBtn',
+    reportForm: 'reportForm', reportPermission: 'reportPermission', reportFormTitle: 'reportFormTitle', reportSubmitBtn: 'reportSubmitBtn', reportId: 'reportId', reportEmployee: 'reportEmployee', reportTitle: 'reportTitle', reportContent: 'reportContent', reportSearch: 'reportSearch', staffReportForm: 'staffReportForm', staffReportTitle: 'staffReportTitle', staffReportContent: 'staffReportContent', staffReportSubmitBtn: 'staffReportSubmitBtn',
+    reportTableBody: 'reportTableBody', missingReportPenaltiesTableBody: 'missingReportPenaltiesTableBody', incomeForm: 'incomeForm', incomeType: 'incomeType', incomeCategory: 'incomeCategory', incomeAmount: 'incomeAmount',
     incomeDate: 'incomeDate', incomeDescription: 'incomeDescription', incomeTableBody: 'incomeTableBody', revenueMetric: 'revenueMetric', expensesMetric: 'expensesMetric',
     profitMetric: 'profitMetric', financeRangeFilter: 'financeRangeFilter',
     payrollAdjustmentForm: 'payrollAdjustmentForm', payrollAdjustmentId: 'payrollAdjustmentId', payrollAdjustmentFormTitle: 'payrollAdjustmentFormTitle', payrollAdjustmentSubmitBtn: 'payrollAdjustmentSubmitBtn', payrollAdjustmentEmployee: 'payrollAdjustmentEmployee', payrollAdjustmentType: 'payrollAdjustmentType', payrollAdjustmentAmount: 'payrollAdjustmentAmount', payrollAdjustmentDate: 'payrollAdjustmentDate', payrollAdjustmentNotes: 'payrollAdjustmentNotes', payrollAdjustmentResetBtn: 'payrollAdjustmentResetBtn', payrollAdjustmentSearch: 'payrollAdjustmentSearch', payrollAdjustmentTableBody: 'payrollAdjustmentTableBody', payrollLoansMetric: 'payrollLoansMetric', payrollAdvancesMetric: 'payrollAdvancesMetric', payrollBonusesMetric: 'payrollBonusesMetric', payrollNetMetric: 'payrollNetMetric', payrollPeriodFilter: 'payrollPeriodFilter', payrollPeriodLabel: 'payrollPeriodLabel', payrollSummaryTableBody: 'payrollSummaryTableBody', budgetForm: 'budgetForm', salaryBudget: 'salaryBudget',
     operationsBudget: 'operationsBudget', budgetSalaryValue: 'budgetSalaryValue', budgetOperationsValue: 'budgetOperationsValue', budgetSalaryActual: 'budgetSalaryActual',
     budgetOperationsActual: 'budgetOperationsActual', budgetSalaryStatus: 'budgetSalaryStatus', budgetOperationsStatus: 'budgetOperationsStatus', budgetAlerts: 'budgetAlerts',
-    staffPortalStatus: 'staffPortalStatus', staffAttendanceSummary: 'staffAttendanceSummary', staffAttendanceDetail: 'staffAttendanceDetail', staffReportsSummary: 'staffReportsSummary', staffReportsDetail: 'staffReportsDetail', staffSalaryValue: 'staffSalaryValue', staffActualSalaryValue: 'staffActualSalaryValue', staffSalaryPeriodLabel: 'staffSalaryPeriodLabel', staffSalaryStatus: 'staffSalaryStatus', staffTasksBody: 'staffTasksBody', staffReportsBody: 'staffReportsBody', staffDeductionsBody: 'staffDeductionsBody', staffDailyAttendanceBody: 'staffDailyAttendanceBody', staffMonthlyReportsBody: 'staffMonthlyReportsBody', staffColleaguesBody: 'staffColleaguesBody', staffCheckInBtn: 'staffCheckInBtn', staffCheckOutBtn: 'staffCheckOutBtn', staffInactiveState: 'staffInactiveState', staffActiveContent: 'staffActiveContent', attendanceLockStatus: 'attendanceLockStatus', attendanceLockBtn: 'attendanceLockBtn', employeeCredentialBox: 'employeeCredentialBox',
+    staffPortalStatus: 'staffPortalStatus', staffAttendanceSummary: 'staffAttendanceSummary', staffAttendanceDetail: 'staffAttendanceDetail', staffReportsSummary: 'staffReportsSummary', staffReportsDetail: 'staffReportsDetail', staffSalaryValue: 'staffSalaryValue', staffActualSalaryValue: 'staffActualSalaryValue', staffSalaryPeriodLabel: 'staffSalaryPeriodLabel', staffSalaryStatus: 'staffSalaryStatus', staffTasksBody: 'staffTasksBody', staffReportsBody: 'staffReportsBody', staffDeductionsBody: 'staffDeductionsBody', staffDailyAttendanceBody: 'staffDailyAttendanceBody', staffMonthlyReportsBody: 'staffMonthlyReportsBody', staffColleaguesBody: 'staffColleaguesBody', staffCheckInBtn: 'staffCheckInBtn', staffCheckOutBtn: 'staffCheckOutBtn', staffInactiveState: 'staffInactiveState', staffActiveContent: 'staffActiveContent', staffAttendanceLockStatus: 'staffAttendanceLockStatus', adminAttendanceLockStatus: 'adminAttendanceLockStatus', attendanceLockBtn: 'attendanceLockBtn', employeeCredentialBox: 'employeeCredentialBox',
     attendanceDateFilter: 'attendanceDateFilter', reportDateFilter: 'reportDateFilter', taskStatusFilter: 'taskStatusFilter', payrollAdjDateFilter: 'payrollAdjDateFilter',
     toastContainer: 'toastContainer',
     taskCountdownGrid: 'taskCountdownGrid',
-    staffTaskCountdownGrid: 'staffTaskCountdownGrid'
+    staffTaskCountdownGrid: 'staffTaskCountdownGrid',
+    officeForm: 'officeForm', officeId: 'officeId', officeName: 'officeName', officeLatitude: 'officeLatitude', officeLongitude: 'officeLongitude', officeRadius: 'officeRadius', officeSubmitBtn: 'officeSubmitBtn', officeResetBtn: 'officeResetBtn', officeTableBody: 'officeTableBody'
   };
 
   Object.entries(ids).forEach(([key, id]) => {
     dom[key] = document.getElementById(id);
   });
+}
+
+function renderOffices() {
+  const tableBody = dom.officeTableBody;
+  if (!tableBody) return;
+
+  const rows = [...(state.db.offices || [])]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((office) => {
+      const count = state.db.employees.filter((emp) => emp.officeId === office.id).length;
+      return `
+        <tr>
+          <td><div class="fw-semibold">${office.name}</div></td>
+          <td>${office.latitude.toFixed(6)}</td>
+          <td>${office.longitude.toFixed(6)}</td>
+          <td>${office.radius}m</td>
+          <td><span class="chip chip-neutral">${count}</span></td>
+          <td>
+            <button class="btn btn-sm btn-soft me-1" data-action="edit-office" data-id="${office.id}">Edit</button>
+            <button class="btn btn-sm btn-outline-secondary" data-action="delete-office" data-id="${office.id}">Delete</button>
+          </td>
+        </tr>`;
+    }).join('');
+
+  tableBody.innerHTML = rows || '<tr><td colspan="6" class="text-center text-muted py-4">No offices configured.</td></tr>';
+
+  if (dom.employeeOffice) {
+    const selected = dom.employeeOffice.value;
+    dom.employeeOffice.innerHTML = [...(state.db.offices || [])]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((off) => `<option value="${off.id}">${off.name}</option>`)
+      .join('');
+    if (selected && [...state.db.offices].some(o => o.id === selected)) {
+      dom.employeeOffice.value = selected;
+    }
+  }
+}
+
+function upsertOffice(event) {
+  event.preventDefault();
+  const id = dom.officeId.value || crypto.randomUUID();
+  const name = dom.officeName.value.trim();
+  const latitude = Number(dom.officeLatitude.value);
+  const longitude = Number(dom.officeLongitude.value);
+  const radius = Number(dom.officeRadius.value);
+
+  const office = { id, name, latitude, longitude, radius };
+
+  const index = state.db.offices.findIndex((o) => o.id === id);
+  if (index >= 0) {
+    state.db.offices[index] = office;
+    showToast('Office updated successfully.', 'success');
+  } else {
+    state.db.offices.push(office);
+    showToast('Office created successfully.', 'success');
+  }
+
+  saveDatabase();
+  resetOfficeForm();
+  refreshAll();
+}
+
+function resetOfficeForm() {
+  if (dom.officeForm) dom.officeForm.reset();
+  if (dom.officeId) dom.officeId.value = '';
+  if (dom.officeFormTitle) dom.officeFormTitle.textContent = 'Create Office';
+  if (dom.officeSubmitBtn) dom.officeSubmitBtn.textContent = 'Save Office';
 }
 
 function bindEvents() {
@@ -2192,6 +2539,8 @@ function bindEvents() {
   dom.payrollAdjustmentForm.addEventListener('submit', submitPayrollAdjustment);
   dom.payrollAdjustmentResetBtn.addEventListener('click', resetPayrollAdjustmentForm);
   dom.budgetForm.addEventListener('submit', submitBudget);
+  if (dom.officeForm) dom.officeForm.addEventListener('submit', upsertOffice);
+  if (dom.officeResetBtn) dom.officeResetBtn.addEventListener('click', resetOfficeForm);
   dom.financeRangeFilter.addEventListener('change', renderFinance);
   dom.payrollAdjustmentSearch.addEventListener('input', renderPayrollAdjustments);
   if (dom.payrollPeriodFilter) dom.payrollPeriodFilter.addEventListener('change', renderPayrollAdjustments);

@@ -16,7 +16,7 @@ Single-page HR management web app built with HTML, CSS, JavaScript, Bootstrap 5,
 ## Login
 
 - Email: `admin@hr.local`
-- Password: `Admin@123`
+- Password: `Chrisella1!`
 
 ## Run
 
