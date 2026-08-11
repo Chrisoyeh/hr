@@ -1,5 +1,5 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js';
-import { doc, getDoc, getFirestore, onSnapshot, setDoc } from 'https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js';
+import { connectFirestoreEmulator, doc, getDoc, getFirestore, onSnapshot, setDoc } from 'https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js';
 
 const SESSION_KEY = 'hr-management-session-v1';
 const LATE_CUTOFF = '07:45';
@@ -15,6 +15,11 @@ const firebaseConfig = {
 };
 const firebaseApp = initializeApp(firebaseConfig);
 const firebaseDb = getFirestore(firebaseApp);
+
+if (new URLSearchParams(location.search).has('emulator')) {
+  connectFirestoreEmulator(firebaseDb, '127.0.0.1', 8080);
+}
+
 const firebaseAppStateRef = doc(firebaseDb, 'appState', 'main');
 
 const defaultSeed = {
@@ -110,10 +115,16 @@ function timeToMinutes(timeValue) {
   return hours * 60 + minutes;
 }
 
+const passwordHashCache = new Map();
 async function hashPassword(password) {
+  if (passwordHashCache.has(password)) {
+    return passwordHashCache.get(password);
+  }
   const encoded = new TextEncoder().encode(password);
   const digest = await crypto.subtle.digest('SHA-256', encoded);
-  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  const hash = Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  passwordHashCache.set(password, hash);
+  return hash;
 }
 
 function generatePassword(length = 10) {
@@ -266,7 +277,7 @@ async function prepareDatabase(database) {
         username: 'Admin',
         email: user.email || 'admin@hr.local',
         active: user.active !== false,
-        passwordHash: await hashPassword('Chrisella1!')
+        passwordHash: user.passwordHash || await hashPassword('Chrisella1!')
       };
     }
 
@@ -310,6 +321,9 @@ async function prepareDatabase(database) {
       salaryPaidAt
     });
 
+    const existingStaffUser = normalized.users.find((u) => u.role === 'staff' && u.employeeId === employee.id);
+    const staffPasswordHash = existingStaffUser?.passwordHash || await hashPassword(employee.id);
+
     syncedStaffUsers.push({
       name: employee.fullName,
       username: email,
@@ -317,7 +331,7 @@ async function prepareDatabase(database) {
       role: 'staff',
       employeeId: employee.id,
       active: employee.active !== false,
-      passwordHash: await hashPassword(employee.id)
+      passwordHash: staffPasswordHash
     });
   }
 
@@ -379,30 +393,46 @@ async function createSeedDatabase() {
     payrollAdjustments: defaultSeed.payrollAdjustments || [],
     payrollPayments: defaultSeed.payrollPayments || [],
     missingReportPenalties: defaultSeed.missingReportPenalties || [],
+    offices: defaultSeed.offices,
     budget: defaultSeed.budget,
     settings: defaultSeed.settings
   };
 }
 
 function saveDatabase() {
+  state.db.settings.lastWriteTimestamp = Date.now();
   void setDoc(firebaseAppStateRef, state.db).catch((error) => {
     console.error('Failed to sync Firestore state:', error);
     showToast('Unable to sync data to Firebase.', 'danger');
   });
 }
 
-// Sets up a real-time Firestore listener so all open sessions (admin, staff) see
-// updates immediately — e.g. an employee signing out is reflected on the admin
-// attendance table without a page refresh.
 function startRealtimeListener() {
-  let latestSnapshotTime = 0;
+  let latestAppliedSnapshotId = 0;
+  let snapshotCounter = 0;
+
   onSnapshot(firebaseAppStateRef, (snapshot) => {
     if (!snapshot.exists()) return;
-    const snapshotTime = Date.now();
-    latestSnapshotTime = snapshotTime;
+    snapshotCounter++;
+    const currentSnapshotId = snapshotCounter;
     const raw = snapshot.data();
+
     prepareDatabase(raw).then((incoming) => {
-      if (snapshotTime !== latestSnapshotTime) return;
+      // If a newer snapshot has already been applied, discard this older one.
+      if (currentSnapshotId < latestAppliedSnapshotId) {
+        console.log(`Discarding snapshot ${currentSnapshotId} because a newer one (${latestAppliedSnapshotId}) has already been applied.`);
+        return;
+      }
+
+      // Prevent stale server snapshots from overwriting a newer local state
+      const incomingTs = incoming?.settings?.lastWriteTimestamp || 0;
+      const localTs = state.db?.settings?.lastWriteTimestamp || 0;
+      if (state.db && incomingTs < localTs) {
+        console.log('Ignoring stale Firestore snapshot. Local TS:', localTs, 'Incoming TS:', incomingTs);
+        return;
+      }
+
+      latestAppliedSnapshotId = currentSnapshotId;
       state.db = incoming;
       if (state.session) refreshAll();
     });
@@ -1625,6 +1655,8 @@ function configureRoleUi() {
   if (staffMode) {
     dom.pageTitle.textContent = 'Staff Portal';
     setActiveView('staffView');
+  } else {
+    setActiveView('dashboardView');
   }
 }
 
@@ -1968,9 +2000,9 @@ async function submitStaffAttendance(action) {
       permission: existing.permission || false,
       timeIn: action === 'check-in' ? (existing.timeIn || now) : existing.timeIn,
       timeOut: action === 'check-out' ? now : existing.timeOut,
-      latitude: action === 'check-in' ? (telemetry.latitude || existing.latitude || null) : existing.latitude,
-      longitude: action === 'check-in' ? (telemetry.longitude || existing.longitude || null) : existing.longitude,
-      accuracy: action === 'check-in' ? (telemetry.accuracy || existing.accuracy || null) : existing.accuracy
+      latitude: action === 'check-in' ? (telemetry.latitude || existing.latitude || null) : (existing.latitude || null),
+      longitude: action === 'check-in' ? (telemetry.longitude || existing.longitude || null) : (existing.longitude || null),
+      accuracy: action === 'check-in' ? (telemetry.accuracy || existing.accuracy || null) : (existing.accuracy || null)
     };
   } else {
     state.db.attendance.push({
