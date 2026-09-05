@@ -1,2052 +1,82 @@
-import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js';
-import { connectFirestoreEmulator, doc, getDoc, getFirestore, onSnapshot, setDoc } from 'https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js';
+import { dom, cacheDom } from './js/modules/dom.js';
+import { state, loadSession, saveSession, getPayrollPayment, setPayrollPayment, getPayrollPeriodLabel, getSelectedPayrollPeriodKey, getCurrentPayrollPeriodKey } from './js/state.js';
+import { loadDatabase, saveDatabase, startRealtimeListener } from './js/services/firestore.js';
+import { exportFullSystemJson, exportPayrollCsv, exportAttendanceCsv, exportSupervisorsCsv } from './js/services/export.js';
+import { renderUserAvatars, compressImage, updateAvatarElement, debounce, showToast, todayISO, showAppLoading, updateAppLoading, hideAppLoading } from './js/utils.js';
 
-const SESSION_KEY = 'hr-management-session-v1';
-const LATE_CUTOFF = '07:45';
-const CLOSING_TIME = '15:30';
-const firebaseConfig = {
-  apiKey: 'AIzaSyDMGBOcLA8xf7dpFlQy4jeLTtWFcHIHUf0',
-  authDomain: 'hlts-ltd-hr.firebaseapp.com',
-  projectId: 'hlts-ltd-hr',
-  storageBucket: 'hlts-ltd-hr.firebasestorage.app',
-  messagingSenderId: '317869307639',
-  appId: '1:317869307639:web:d03eca24021447b1e9c5f2',
-  measurementId: 'G-PK4BTRN4B6'
-};
-const firebaseApp = initializeApp(firebaseConfig);
-const firebaseDb = getFirestore(firebaseApp);
+import { handleLogin, logout, configureRoleUi, switchDemoRole, setupLiveClock } from './js/modules/auth.js';
+import { renderDashboard, init3DTilt } from './js/modules/dashboard.js';
+import { renderManagementIssues, openManagementIssueModal, saveManagementIssue } from './js/modules/managementIssues.js';
+import { renderSupervisorsView, submitSupervisorReport, resetSupervisorReportForm, saveSupervisorDraft, restoreSupervisorDraft, getSupDraftKey, openReportDetailModal } from './js/modules/supervisors.js';
+import { renderDevelopersView, submitDeveloperReport, resetDeveloperReportForm, addDevProjectRow } from './js/modules/developers.js';
+import { renderWelfareHrView, submitWelfareReport, resetWelfareReportForm, toggleQAStatus } from './js/modules/welfare.js';
+import { renderSchoolsView, upsertSchool, resetSchoolForm, deleteSchool } from './js/modules/schools.js';
+import { renderEmployees, upsertEmployee, resetEmployeeForm, buildSelectOptions } from './js/modules/employees.js';
+import { renderAttendance, upsertAttendance, resetAttendanceForm, submitStaffAttendance, toggleAttendanceLock, handleAttendanceFormQuickSign, isLate, getAttendancePenalty } from './js/modules/attendance.js';
+import { renderTasks, upsertTask, resetTaskForm, renderTaskCountdowns, updateCountdownDisplays } from './js/modules/tasks.js';
+import { renderPayrollAdjustments, submitPayrollAdjustment, resetPayrollAdjustmentForm, getEmployeeDeductions, getStaffDeductionRows, getPayrollTotals, batchMarkAllPayrollPaid, openStaffPaySlipModal, populatePayrollPeriodFilter } from './js/modules/payroll.js';
+import { renderFinance, submitIncome } from './js/modules/finance.js';
+import { renderBudget, submitBudget } from './js/modules/budget.js';
+import { renderStaffPortal } from './js/modules/staffPortal.js';
 
-if (new URLSearchParams(location.search).has('emulator')) {
-  connectFirestoreEmulator(firebaseDb, '127.0.0.1', 8080);
-}
+export function setActiveView(viewId) {
+  const panel = document.getElementById(viewId);
+  if (!panel) return;
 
-const firebaseAppStateRef = doc(firebaseDb, 'appState', 'main');
+  document.querySelectorAll('.view-panel').forEach((el) => el.classList.remove('active'));
+  document.querySelectorAll('#sidebarNav .nav-link').forEach((el) => el.classList.remove('active'));
 
-const defaultSeed = {
-  users: [
-    { name: 'System Admin', username: 'Admin', email: 'admin@hr.local', role: 'admin', password: 'Chrisella1!', active: true },
-    { name: 'Staff User', username: 'staff@hr.local', email: 'staff@hr.local', role: 'staff', password: 'EMP-9001', employeeId: 'EMP-9001', active: true }
-  ],
-  employees: [
-    {
-      id: 'EMP-9001',
-      fullName: 'Staff User',
-      email: 'staff@hr.local',
-      username: 'staff@hr.local',
-      position: 'Staff Officer',
-      department: 'Operations',
-      officeId: 'off-hq',
-      salary: 250000,
-      active: true,
-      salaryPaid: false,
-      salaryPaidAt: null,
-      createdAt: new Date().toISOString()
-    }
-  ],
-  offices: [
-    { id: 'off-hq', name: 'Lagos Headquarters', latitude: 6.5244, longitude: 3.3792, radius: 100 }
-  ],
-  attendance: [],
-  tasks: [],
-  reports: [],
-  income: [],
-  payrollAdjustments: [],
-  payrollPayments: [],
-  missingReportPenalties: [],
-  budget: {
-    salary: 0,
-    operations: 0
-  },
-  settings: {
-    attendanceLocked: false
-  }
-};
+  panel.classList.add('active');
+  const button = document.querySelector(`#sidebarNav [data-view="${viewId}"]`);
+  if (button) button.classList.add('active');
 
-const state = {
-  db: null,
-  session: null,
-  charts: {},
-  credentialCache: {}
-};
-
-const dom = {};
-
-function todayISO(dayOffset = 0) {
-  const date = new Date();
-  date.setDate(date.getDate() + dayOffset);
-  date.setHours(12, 0, 0, 0);
-  return date.toISOString().slice(0, 10);
-}
-
-function monthDateISO(monthOffset = 0, day = 1) {
-  const date = new Date();
-  date.setMonth(date.getMonth() + monthOffset, day);
-  date.setHours(12, 0, 0, 0);
-  return date.toISOString().slice(0, 10);
-}
-
-function saturdayLateISOString(isLate) {
-  const now = new Date();
-  const current = new Date(now);
-  const day = current.getDay();
-  const diffToSaturday = (6 - day + 7) % 7;
-  current.setDate(current.getDate() + diffToSaturday);
-  current.setHours(isLate ? 10 : 9, isLate ? 15 : 30, 0, 0);
-  return current.toISOString();
-}
-
-function formatCurrency(value) {
-  return new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 0 }).format(Number(value || 0));
-}
-
-function formatDate(value) {
-  if (!value) return '—';
-  return new Date(value).toLocaleDateString('en-NG', { year: 'numeric', month: 'short', day: 'numeric' });
-}
-
-function formatDateTime(value) {
-  if (!value) return '—';
-  return new Date(value).toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' });
-}
-
-function timeToMinutes(timeValue) {
-  if (!timeValue) return null;
-  const [hours, minutes] = timeValue.split(':').map(Number);
-  return hours * 60 + minutes;
-}
-
-const passwordHashCache = new Map();
-async function hashPassword(password) {
-  if (passwordHashCache.has(password)) {
-    return passwordHashCache.get(password);
-  }
-  const encoded = new TextEncoder().encode(password);
-  const digest = await crypto.subtle.digest('SHA-256', encoded);
-  const hash = Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
-  passwordHashCache.set(password, hash);
-  return hash;
-}
-
-function generatePassword(length = 10) {
-  const charset = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
-  const bytes = crypto.getRandomValues(new Uint32Array(length));
-  return Array.from(bytes, (value) => charset[value % charset.length]).join('');
-}
-
-function slugifyName(value) {
-  return String(value || 'staff')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 20) || 'staff';
-}
-
-function buildEmployeeUsername(fullName, employeeId) {
-  return `${slugifyName(fullName)}-${String(employeeId || '').slice(-4).toLowerCase()}`;
-}
-
-function buildEmployeeCredentials(employee) {
-  const username = String(employee.email || employee.username || buildEmployeeEmail(employee.fullName, employee.id)).toLowerCase();
-  const password = String(employee.id || '').toUpperCase();
-  return { username, password };
-}
-
-function buildEmployeeEmail(fullName, employeeId) {
-  return `${slugifyName(fullName || employeeId || 'staff')}@hr.local`;
-}
-
-function getCurrentPayrollPeriodKey(date = new Date()) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-}
-
-function getPayrollPeriodLabel(periodKey) {
-  if (!periodKey) return 'Unknown period';
-  const [year, month] = periodKey.split('-').map(Number);
-  if (!year || !month) return periodKey;
-  return new Date(year, month - 1, 1).toLocaleDateString('en-NG', { month: 'long', year: 'numeric' });
-}
-
-function getSelectedPayrollPeriodKey() {
-  return dom.payrollPeriodFilter?.value || getCurrentPayrollPeriodKey();
-}
-
-function buildPayrollPeriodOptions() {
-  const periodKeys = new Set();
-
-  for (let offset = 11; offset >= 0; offset -= 1) {
-    const date = new Date();
-    date.setMonth(date.getMonth() - offset, 1);
-    periodKeys.add(getCurrentPayrollPeriodKey(date));
-  }
-
-  state.db.payrollPayments.forEach((entry) => {
-    if (entry?.periodKey) periodKeys.add(entry.periodKey);
-  });
-
-  state.db.employees.forEach((employee) => {
-    if (employee?.salaryPaidAt) periodKeys.add(new Date(employee.salaryPaidAt).toISOString().slice(0, 7));
-  });
-
-  return [...periodKeys].sort().reverse();
-}
-
-function populatePayrollPeriodFilter() {
-  if (!dom.payrollPeriodFilter) return;
-
-  const selectedPeriod = dom.payrollPeriodFilter.value || getCurrentPayrollPeriodKey();
-  const options = buildPayrollPeriodOptions();
-  dom.payrollPeriodFilter.innerHTML = options
-    .map((periodKey) => `<option value="${periodKey}">${getPayrollPeriodLabel(periodKey)}</option>`)
-    .join('');
-
-  if (options.includes(selectedPeriod)) {
-    dom.payrollPeriodFilter.value = selectedPeriod;
-  } else if (options.length) {
-    dom.payrollPeriodFilter.value = options[0];
-  }
-}
-
-function getPayrollPayment(employeeId, periodKey = getCurrentPayrollPeriodKey()) {
-  return state.db.payrollPayments.find((entry) => entry.employeeId === employeeId && entry.periodKey === periodKey) || null;
-}
-
-function setPayrollPayment(employeeId, periodKey, paid) {
-  const existingIndex = state.db.payrollPayments.findIndex((entry) => entry.employeeId === employeeId && entry.periodKey === periodKey);
-  const existing = existingIndex >= 0 ? state.db.payrollPayments[existingIndex] : null;
-  const updated = {
-    id: existing?.id || crypto.randomUUID(),
-    employeeId,
-    periodKey,
-    paid: Boolean(paid),
-    paidAt: paid ? (existing?.paidAt || new Date().toISOString()) : null,
-    paidBy: paid ? (state.session?.email || state.session?.name || 'admin') : null
+  const titles = {
+    dashboardView: 'Executive Dashboard',
+    managementIssuesView: 'Management Issues & Urgent Hub',
+    supervisorsView: 'Academic Supervisors Office',
+    developersView: 'Developers & Web Office',
+    welfareHrView: 'Welfare & HR Operations',
+    schoolsView: 'Schools & Client Institutions',
+    employeesView: 'Employee Management',
+    attendanceView: 'Daily Attendance & Time Tracking',
+    tasksView: 'Task Assignment & Deadlines',
+    financeView: 'Financial Records',
+    payrollView: 'Payroll Adjustments & Manager Deductions',
+    budgetView: 'Budget Planner & Spending Limits',
+    staffView: 'Staff Self-Service Portal'
   };
 
-  if (existingIndex >= 0) {
-    state.db.payrollPayments[existingIndex] = updated;
-  } else {
-    state.db.payrollPayments.push(updated);
-  }
-
-  return updated;
-}
-
-function normalizeDatabase(database) {
-  return {
-    users: Array.isArray(database?.users) ? database.users : [],
-    employees: Array.isArray(database?.employees) ? database.employees : [],
-    attendance: Array.isArray(database?.attendance) ? database.attendance : [],
-    tasks: Array.isArray(database?.tasks) ? database.tasks : [],
-    reports: Array.isArray(database?.reports) ? database.reports : [],
-    income: Array.isArray(database?.income) ? database.income : [],
-    payrollAdjustments: Array.isArray(database?.payrollAdjustments) ? database.payrollAdjustments : [],
-    payrollPayments: Array.isArray(database?.payrollPayments) ? database.payrollPayments : [],
-    missingReportPenalties: Array.isArray(database?.missingReportPenalties) ? database.missingReportPenalties : [],
-    offices: Array.isArray(database?.offices) ? database.offices : [],
-    budget: {
-      ...defaultSeed.budget,
-      ...(database?.budget || {})
-    },
-    settings: {
-      ...defaultSeed.settings,
-      ...(database?.settings || {})
-    }
-  };
-}
-
-async function prepareDatabase(database) {
-  const normalized = normalizeDatabase(database);
-
-  if (!normalized.offices || normalized.offices.length === 0) {
-    normalized.offices = [
-      { id: 'off-hq', name: 'Lagos Headquarters', latitude: 6.5244, longitude: 3.3792, radius: 100 }
-    ];
-  }
-
-  if (normalized.users.some((user) => !user.passwordHash)) {
-    normalized.users = await Promise.all(normalized.users.map(async (user) => ({
-      ...user,
-      passwordHash: user.passwordHash || await hashPassword(user.password || 'password')
-    })));
-  }
-
-  normalized.users = await Promise.all(normalized.users.map(async (user) => {
-    if (user.role === 'admin') {
-      return {
-        ...user,
-        username: 'Admin',
-        email: user.email || 'admin@hr.local',
-        active: user.active !== false,
-        passwordHash: user.passwordHash || await hashPassword('Chrisella1!')
-      };
-    }
-
-    return {
-      ...user,
-      active: user.active !== false
-    };
-  }));
-
-  const nonStaffUsers = normalized.users.filter((user) => user.role !== 'staff' || !user.employeeId);
-  const syncedEmployees = [];
-  const syncedStaffUsers = [];
-  const syncedPayrollPayments = Array.isArray(normalized.payrollPayments) ? [...normalized.payrollPayments] : [];
-  const payrollPaymentKeys = new Set(syncedPayrollPayments.map((entry) => `${entry.employeeId}|${entry.periodKey}`));
-
-  for (const employee of normalized.employees) {
-    const email = String(employee.email || employee.username || buildEmployeeEmail(employee.fullName, employee.id)).toLowerCase();
-    const salaryPaid = Boolean(employee.salaryPaid);
-    const salaryPaidAt = salaryPaid ? (employee.salaryPaidAt || new Date().toISOString()) : null;
-    const legacyPeriodKey = employee.salaryPaidAt ? new Date(employee.salaryPaidAt).toISOString().slice(0, 7) : getCurrentPayrollPeriodKey();
-
-    if (salaryPaid && !payrollPaymentKeys.has(`${employee.id}|${legacyPeriodKey}`)) {
-      syncedPayrollPayments.push({
-        id: crypto.randomUUID(),
-        employeeId: employee.id,
-        periodKey: legacyPeriodKey,
-        paid: true,
-        paidAt: salaryPaidAt || new Date().toISOString(),
-        paidBy: 'migration'
-      });
-      payrollPaymentKeys.add(`${employee.id}|${legacyPeriodKey}`);
-    }
-
-    syncedEmployees.push({
-      ...employee,
-      email,
-      username: email,
-      officeId: employee.officeId || 'off-hq',
-      active: employee.active !== false,
-      salaryPaid,
-      salaryPaidAt
-    });
-
-    const existingStaffUser = normalized.users.find((u) => u.role === 'staff' && u.employeeId === employee.id);
-    const staffPasswordHash = existingStaffUser?.passwordHash || await hashPassword(employee.id);
-
-    syncedStaffUsers.push({
-      name: employee.fullName,
-      username: email,
-      email,
-      role: 'staff',
-      employeeId: employee.id,
-      active: employee.active !== false,
-      passwordHash: staffPasswordHash
-    });
-  }
-
-  normalized.employees = syncedEmployees;
-  normalized.users = [...nonStaffUsers, ...syncedStaffUsers];
-  normalized.payrollPayments = syncedPayrollPayments.map((entry) => ({
-    ...entry,
-    paid: Boolean(entry.paid),
-    paidAt: entry.paid ? (entry.paidAt || new Date().toISOString()) : null,
-    paidBy: entry.paid ? (entry.paidBy || null) : null
-  }));
-
-  return normalized;
-}
-
-async function loadDatabase() {
-  const snapshot = await getDoc(firebaseAppStateRef);
-
-  if (!snapshot.exists()) {
-    const seeded = await createSeedDatabase();
-    await setDoc(firebaseAppStateRef, seeded);
-    return seeded;
-  }
-
-  const raw = snapshot.data();
-  const prepared = await prepareDatabase(raw);
-  // Only write back to Firestore when migration is needed (passwords not yet hashed).
-  // Avoiding unconditional write-back eliminates the race condition where a page
-  // refresh can overwrite a sign-in record that was saved by saveDatabase() moments
-  // before the new load's getDoc() call completed.
-  const needsMigration = (raw.users || []).some((user) => !user.passwordHash);
-  if (needsMigration) {
-    await setDoc(firebaseAppStateRef, prepared);
-  }
-  return prepared;
-}
-
-async function createSeedDatabase() {
-  const users = [];
-  for (const user of defaultSeed.users) {
-    users.push({
-      name: user.name,
-      username: user.username,
-      email: user.email,
-      role: user.role,
-      employeeId: user.employeeId || null,
-      active: user.active !== false,
-      passwordHash: await hashPassword(user.password)
-    });
-  }
-
-  return {
-    users,
-    employees: defaultSeed.employees,
-    attendance: defaultSeed.attendance,
-    tasks: defaultSeed.tasks,
-    reports: defaultSeed.reports,
-    income: defaultSeed.income,
-    payrollAdjustments: defaultSeed.payrollAdjustments || [],
-    payrollPayments: defaultSeed.payrollPayments || [],
-    missingReportPenalties: defaultSeed.missingReportPenalties || [],
-    offices: defaultSeed.offices,
-    budget: defaultSeed.budget,
-    settings: defaultSeed.settings
-  };
-}
-
-function saveDatabase() {
-  state.db.settings.lastWriteTimestamp = Date.now();
-  void setDoc(firebaseAppStateRef, state.db).catch((error) => {
-    console.error('Failed to sync Firestore state:', error);
-    showToast('Unable to sync data to Firebase.', 'danger');
-  });
-}
-
-function startRealtimeListener() {
-  let latestAppliedSnapshotId = 0;
-  let snapshotCounter = 0;
-
-  onSnapshot(firebaseAppStateRef, (snapshot) => {
-    if (!snapshot.exists()) return;
-    snapshotCounter++;
-    const currentSnapshotId = snapshotCounter;
-    const raw = snapshot.data();
-
-    prepareDatabase(raw).then((incoming) => {
-      // If a newer snapshot has already been applied, discard this older one.
-      if (currentSnapshotId < latestAppliedSnapshotId) {
-        console.log(`Discarding snapshot ${currentSnapshotId} because a newer one (${latestAppliedSnapshotId}) has already been applied.`);
-        return;
-      }
-
-      // Prevent stale server snapshots from overwriting a newer local state
-      const incomingTs = incoming?.settings?.lastWriteTimestamp || 0;
-      const localTs = state.db?.settings?.lastWriteTimestamp || 0;
-      if (state.db && incomingTs < localTs) {
-        console.log('Ignoring stale Firestore snapshot. Local TS:', localTs, 'Incoming TS:', incomingTs);
-        return;
-      }
-
-      latestAppliedSnapshotId = currentSnapshotId;
-      state.db = incoming;
-      if (state.session) refreshAll();
-    });
-  });
-}
-
-function loadSession() {
-  const raw = localStorage.getItem(SESSION_KEY);
-  return raw ? JSON.parse(raw) : null;
-}
-
-function saveSession(session) {
-  state.session = session;
-  if (session) {
-    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-  } else {
-    localStorage.removeItem(SESSION_KEY);
-  }
-}
-
-function getEmployeeName(employeeId) {
-  return state.db.employees.find((employee) => employee.id === employeeId)?.fullName || 'Unknown Employee';
-}
-
-function getCurrentEmployee() {
-  if (!state.session) return null;
-  if (state.session.employeeId) {
-    const byId = state.db.employees.find((employee) => employee.id === state.session.employeeId);
-    if (byId) return byId;
-  }
-
-  return state.db.employees.find((employee) => String(employee.email || '').toLowerCase() === String(state.session.email || '').toLowerCase()) || null;
-}
-
-function isEmployeeActive(employee) {
-  return employee?.active !== false;
-}
-
-function isStaffSession() {
-  return state.session?.role === 'staff';
-}
-
-function getCurrentEmployeeId() {
-  return getCurrentEmployee()?.id || state.session?.employeeId || null;
-}
-
-function getLatestEmployeeId() {
-  const last = state.db.employees[state.db.employees.length - 1];
-  if (!last) return 'EMP-1001';
-  const numeric = Number(last.id.replace('EMP-', '')) + 1;
-  return `EMP-${String(numeric).padStart(4, '0')}`;
-}
-
-function getTodayAttendance() {
-  const today = todayISO(0);
-  return state.db.attendance.filter((entry) => entry.date === today);
-}
-
-function getCurrentEmployeeAttendance() {
-  const employeeId = getCurrentEmployeeId();
-  if (!employeeId) return [];
-  return state.db.attendance.filter((entry) => entry.employeeId === employeeId);
-}
-
-function getCurrentEmployeeTasks() {
-  const employeeId = getCurrentEmployeeId();
-  if (!employeeId) return [];
-  return state.db.tasks.filter((task) => task.employeeId === employeeId);
-}
-
-function getCurrentEmployeeReports() {
-  const employeeId = getCurrentEmployeeId();
-  if (!employeeId) return [];
-  return state.db.reports.filter((report) => report.employeeId === employeeId);
-}
-
-function getCurrentEmployeeDailyAttendance() {
-  const employeeId = getCurrentEmployeeId();
-  if (!employeeId) return [];
-  return [...state.db.attendance]
-    .filter((entry) => entry.employeeId === employeeId)
-    .sort((left, right) => new Date(right.date) - new Date(left.date))
-    .slice(0, 7);
-}
-
-function getMonthlyReportCounts(employeeId) {
-  const results = [];
-  for (let offset = 5; offset >= 0; offset -= 1) {
-    const date = new Date();
-    date.setMonth(date.getMonth() - offset, 1);
-    const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-    const monthLabel = date.toLocaleDateString('en-NG', { month: 'short', year: 'numeric' });
-    const count = state.db.reports.filter((report) => report.employeeId === employeeId && String(report.submittedAt || '').startsWith(monthKey)).length;
-    results.push({ month: monthLabel, count });
-  }
-  return results;
-}
-
-function getStaffPresenceToday() {
-  const today = todayISO(0);
-  return state.db.employees
-    .filter((employee) => isEmployeeActive(employee))
-    .filter((employee) => employee.id !== getCurrentEmployeeId())
-    .map((employee) => {
-      const attendance = state.db.attendance.find((entry) => entry.employeeId === employee.id && entry.date === today);
-      return {
-        employee,
-        present: attendance?.status === 'Present',
-        status: attendance?.status || 'Absent'
-      };
-    });
-}
-
-function getCurrentWeekStartISO() {
-  const now = new Date();
-  const day = now.getDay();
-  const diff = (day + 6) % 7;
-  now.setDate(now.getDate() - diff);
-  now.setHours(0, 0, 0, 0);
-  return now.toISOString();
-}
-
-function hasSubmittedCurrentWeekReport() {
-  const employeeId = getCurrentEmployeeId();
-  if (!employeeId) return false;
-  const weekStart = new Date(getCurrentWeekStartISO());
-  return state.db.reports.some((report) => report.employeeId === employeeId && new Date(report.submittedAt) >= weekStart);
-}
-
-// Returns the ISO date (YYYY-MM-DD) of the Sunday of the current week.
-function getCurrentWeekSundayISO() {
-  const now = new Date();
-  const day = now.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
-  const daysToSunday = (7 - day) % 7;
-  const sunday = new Date(now);
-  sunday.setDate(now.getDate() + daysToSunday);
-  sunday.setHours(0, 0, 0, 0);
-  return sunday.toISOString().slice(0, 10);
-}
-
-// Returns true if the employee submitted at least one report during the Mon–Sun week ending on weekSunday.
-function hasSubmittedReportForWeek(employeeId, weekSunday) {
-  const [y, m, d] = weekSunday.split('-').map(Number);
-  const sundayEnd = new Date(y, m - 1, d, 23, 59, 59, 999);
-  const mondayStart = new Date(y, m - 1, d - 6, 0, 0, 0, 0);
-  return state.db.reports.some((report) => {
-    if (report.employeeId !== employeeId) return false;
-    const submitted = new Date(report.submittedAt);
-    return submitted >= mondayStart && submitted <= sundayEnd;
-  });
-}
-
-// Auto-deducts NGN 4,000 from every active employee who missed their weekly report.
-// Runs once per Sunday week; tracks processed weeks in settings to avoid duplicates.
-function processWeeklyMissingReportDeductions() {
-  const FEATURE_START = '2026-05-17';
-  const currentSunday = getCurrentWeekSundayISO();
-  if (currentSunday < FEATURE_START) return;
-
-  const lastProcessed = state.db.settings.missingReportDeductionsProcessedUpTo || null;
-  if (lastProcessed && lastProcessed >= currentSunday) return;
-
-  // Build list of unprocessed Sundays from the start date up to (and including) the current week.
-  const startSunday = lastProcessed
-    ? (() => {
-        const [ly, lm, ld] = lastProcessed.split('-').map(Number);
-        const next = new Date(ly, lm - 1, ld + 7, 12, 0, 0, 0);
-        return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
-      })()
-    : FEATURE_START;
-
-  const sundays = [];
-  const [sy, sm, sd] = startSunday.split('-').map(Number);
-  let cursor = new Date(sy, sm - 1, sd, 12, 0, 0, 0);
-  const today = todayISO(0);
-  while (true) {
-    const weekSunday = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
-    // Only process Sundays that are strictly in the past (before today)
-    if (weekSunday >= today) {
-      break;
-    }
-    sundays.push(weekSunday);
-    cursor.setDate(cursor.getDate() + 7);
-  }
-
-  if (sundays.length === 0) return;
-
-  if (!Array.isArray(state.db.missingReportPenalties)) state.db.missingReportPenalties = [];
-  const activeEmployees = state.db.employees.filter((e) => e.active !== false);
-
-  for (const weekSunday of sundays) {
-    for (const employee of activeEmployees) {
-      const alreadyRecorded = state.db.missingReportPenalties.some(
-        (p) => p.employeeId === employee.id && p.weekSunday === weekSunday
-      );
-      if (alreadyRecorded) continue;
-
-      // Prevent retroactive penalization for weeks ending before employee's creation date.
-      const employeeCreatedDate = employee.createdAt ? employee.createdAt.slice(0, 10) : '';
-      if (employeeCreatedDate && weekSunday < employeeCreatedDate) continue;
-
-      if (!hasSubmittedReportForWeek(employee.id, weekSunday)) {
-        state.db.missingReportPenalties.push({
-          id: crypto.randomUUID(),
-          employeeId: employee.id,
-          weekSunday,
-          amount: 4000,
-          createdAt: new Date().toISOString()
-        });
-      }
-    }
-  }
-
-  state.db.settings.missingReportDeductionsProcessedUpTo = sundays[sundays.length - 1];
-  saveDatabase();
-}
-
-function getCurrentMonthReportCount() {
-  const employeeId = getCurrentEmployeeId();
-  if (!employeeId) return 0;
-  const monthKey = todayISO(0).slice(0, 7);
-  return state.db.reports.filter((report) => report.employeeId === employeeId && String(report.submittedAt || '').startsWith(monthKey)).length;
-}
-
-function getAttendanceLockState() {
-  return Boolean(state.db.settings?.attendanceLocked);
-}
-
-function setAttendanceLockState(locked) {
-  state.db.settings = {
-    ...state.db.settings,
-    attendanceLocked: Boolean(locked),
-    attendanceLockedAt: new Date().toISOString(),
-    attendanceLockedBy: state.session?.email || state.session?.name || 'admin'
-  };
-}
-
-
-// Returns the attendance record for a given employee on today's date, or null.
-function getTodayAttendanceForEmployee(employeeId) {
-  const today = todayISO(0);
-  return state.db.attendance.find((item) => item.employeeId === employeeId && item.date === today) || null;
-}
-
-
-function getPeriodKeyFromDate(value) {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-}
-
-function isInPayrollPeriod(value, periodKey) {
-  if (!periodKey) return true;
-  return getPeriodKeyFromDate(value) === periodKey;
-}
-
-function periodKeyToDate(periodKey) {
-  if (!periodKey) return null;
-  const [year, month] = String(periodKey).split('-').map(Number);
-  if (!year || !month) return null;
-  return new Date(year, month - 1, 1, 12, 0, 0, 0);
-}
-
-function getPayrollAdjustmentSummary(employeeId, periodKey = null) {
-  return state.db.payrollAdjustments
-    .filter((entry) => entry.employeeId === employeeId && isInPayrollPeriod(entry.date, periodKey))
-    .reduce((accumulator, entry) => {
-      const amount = Number(entry.amount || 0);
-      if (entry.type === 'Bonus') accumulator.bonus += amount;
-      if (entry.type === 'Loan') accumulator.loan += amount;
-      if (entry.type === 'Advance') accumulator.advance += amount;
-      return accumulator;
-    }, { loan: 0, advance: 0, bonus: 0 });
-}
-
-function getAttendancePenalty(entry) {
-  if (entry.status === 'Absent') return 8000;
-  const lateMinutes = timeToMinutes(entry.timeIn) - timeToMinutes(LATE_CUTOFF);
-  if (entry.status === 'Present' && lateMinutes > 0 && !entry.permission) return 4000;
-  return 0;
-}
-
-function isLate(entry) {
-  if (entry.status !== 'Present' || entry.permission) return false;
-  const timeIn = timeToMinutes(entry.timeIn);
-  return timeIn !== null && timeIn > timeToMinutes(LATE_CUTOFF);
-}
-
-function isLateReport(report) {
-  const submittedAt = new Date(report.submittedAt);
-  const day = submittedAt.getDay();
-  const minutes = submittedAt.getHours() * 60 + submittedAt.getMinutes();
-
-  if (day === 5) {
-    return minutes < (12 * 60);
-  }
-
-  if (day === 6) {
-    return minutes > (10 * 60);
-  }
-
-  return true;
-}
-
-function getReportPenalty(report) {
-  if (report?.permission) return 0;
-  return isLateReport(report) ? 2000 : 0;
-}
-
-function isTaskOverdue(task, referenceDate = todayISO(0)) {
-  return Boolean(task?.deadline)
-    && Number(task.completion) < 100
-    && String(task.deadline) < referenceDate;
-}
-
-function getTaskPenalty(task) {
-  if (task?.permission) return 0;
-  return isTaskOverdue(task) ? 3000 : 0;
-}
-
-function getEmployeePeriodDeductions(employeeId, periodKey) {
-  const payrollAdjustments = getPayrollAdjustmentSummary(employeeId, periodKey);
-  const attendancePenalty = state.db.attendance
-    .filter((entry) => entry.employeeId === employeeId && isInPayrollPeriod(entry.date, periodKey))
-    .reduce((sum, entry) => sum + getAttendancePenalty(entry), 0);
-
-  const reportPenalty = state.db.reports
-    .filter((report) => report.employeeId === employeeId && isInPayrollPeriod(report.submittedAt, periodKey))
-    .reduce((sum, report) => sum + getReportPenalty(report), 0);
-
-  const taskPenalty = state.db.tasks
-    .filter((task) => task.employeeId === employeeId && isInPayrollPeriod(task.deadline, periodKey))
-    .reduce((sum, task) => sum + getTaskPenalty(task), 0);
-
-  const missingReportPenalty = (state.db.missingReportPenalties || [])
-    .filter((p) => p.employeeId === employeeId && isInPayrollPeriod(p.weekSunday, periodKey))
-    .reduce((sum, p) => sum + (p.permission ? 0 : Number(p.amount || 0)), 0);
-
-  const originalSalary = Number(state.db.employees.find((employee) => employee.id === employeeId)?.salary || 0);
-  const otherDeductions = attendancePenalty + reportPenalty + taskPenalty + missingReportPenalty;
-  const loanAndAdvance = payrollAdjustments.loan + payrollAdjustments.advance;
-  const grossSalary = originalSalary + payrollAdjustments.bonus;
-
-  return {
-    loan: payrollAdjustments.loan,
-    advance: payrollAdjustments.advance,
-    bonus: payrollAdjustments.bonus,
-    attendancePenalty,
-    reportPenalty,
-    taskPenalty,
-    missingReportPenalty,
-    loanAndAdvance,
-    otherDeductions,
-    totalDeductions: otherDeductions + loanAndAdvance,
-    originalSalary,
-    grossSalary,
-    periodNetBeforeCarry: grossSalary - otherDeductions - loanAndAdvance
-  };
-}
-
-function getCarryBalanceBeforePeriod(employeeId, periodKey) {
-  const employee = state.db.employees.find((item) => item.id === employeeId);
-  const targetDate = periodKeyToDate(periodKey);
-  if (!employee || !targetDate) return 0;
-
-  const createdAtDate = employee.createdAt ? new Date(employee.createdAt) : null;
-  const startDate = createdAtDate && !Number.isNaN(createdAtDate.getTime())
-    ? new Date(createdAtDate.getFullYear(), createdAtDate.getMonth(), 1, 12, 0, 0, 0)
-    : new Date(targetDate.getFullYear(), targetDate.getMonth(), 1, 12, 0, 0, 0);
-
-  if (startDate > targetDate) return 0;
-
-  const cursor = new Date(startDate);
-  let carry = 0;
-
-  while (cursor < targetDate) {
-    const cursorPeriodKey = getCurrentPayrollPeriodKey(cursor);
-    const periodSummary = getEmployeePeriodDeductions(employeeId, cursorPeriodKey);
-    const periodPayable = periodSummary.periodNetBeforeCarry - carry;
-    carry = Math.max(-periodPayable, 0);
-    cursor.setMonth(cursor.getMonth() + 1);
-  }
-
-  return carry;
-}
-
-function getEmployeeDeductions(employeeId, periodKey = getSelectedPayrollPeriodKey()) {
-  const periodSummary = getEmployeePeriodDeductions(employeeId, periodKey);
-  const carryIn = getCarryBalanceBeforePeriod(employeeId, periodKey);
-  const netSalary = periodSummary.periodNetBeforeCarry - carryIn;
-  const carryForward = Math.max(-netSalary, 0);
-
-  return {
-    ...periodSummary,
-    carryIn,
-    carryForward,
-    totalDeductions: periodSummary.totalDeductions + carryIn,
-    finalSalary: netSalary,
-    payableBalance: netSalary
-  };
-}
-
-function getPayrollTotals() {
-  const payrollPeriodKey = getSelectedPayrollPeriodKey();
-  return state.db.employees.reduce((accumulator, employee) => {
-    const summary = getEmployeeDeductions(employee.id, payrollPeriodKey);
-    accumulator.original += summary.originalSalary;
-    accumulator.deductions += summary.totalDeductions;
-    accumulator.bonuses += summary.bonus;
-    accumulator.net += summary.finalSalary;
-    accumulator.salaryActual += summary.finalSalary;
-    return accumulator;
-  }, { original: 0, deductions: 0, bonuses: 0, net: 0, salaryActual: 0 });
-}
-
-function getOperationsActual(periodKey = getSelectedPayrollPeriodKey()) {
-  const totalExpense = state.db.income
-    .filter((entry) => entry.type === 'Expense' && !isSalaryCategory(entry.category) && isInPayrollPeriod(entry.date, periodKey))
-    .reduce((sum, entry) => sum + Number(entry.amount), 0);
-
-  const penalties = state.db.attendance
-      .filter((entry) => isInPayrollPeriod(entry.date, periodKey))
-      .reduce((sum, entry) => sum + getAttendancePenalty(entry), 0)
-    + state.db.reports
-      .filter((report) => isInPayrollPeriod(report.submittedAt, periodKey))
-      .reduce((sum, report) => sum + getReportPenalty(report), 0)
-    + state.db.tasks
-      .filter((task) => isInPayrollPeriod(task.deadline, periodKey))
-      .reduce((sum, task) => sum + getTaskPenalty(task), 0)
-    + (state.db.missingReportPenalties || [])
-      .filter((p) => isInPayrollPeriod(p.weekSunday, periodKey))
-      .reduce((sum, p) => sum + (p.permission ? 0 : Number(p.amount || 0)), 0);
-
-  return totalExpense + penalties;
-}
-
-function getStaffDeductionRows(employeeId) {
-  const summary = getEmployeeDeductions(employeeId, getSelectedPayrollPeriodKey());
-  return [
-    { label: 'Carry-in deduction', purpose: 'Outstanding deduction from previous month(s)', amount: summary.carryIn },
-    { label: 'Attendance penalty', purpose: 'Late arrival or absence', amount: summary.attendancePenalty },
-    { label: 'Report penalty', purpose: 'Weekly report submitted late', amount: summary.reportPenalty },
-    { label: 'Missing report penalty', purpose: 'No report submitted for the week (auto-deducted after Sunday)', amount: summary.missingReportPenalty },
-    { label: 'Task penalty', purpose: 'Incomplete or overdue task', amount: summary.taskPenalty },
-    { label: 'Loan deduction', purpose: 'Loan collected from salary', amount: summary.loan },
-    { label: 'Advance deduction', purpose: 'Salary advance collected from salary', amount: summary.advance },
-    { label: 'Bonus adjustment', purpose: 'Added to salary before deductions', amount: summary.bonus }
-  ];
-}
-
-function isSalaryCategory(category) {
-  const normalized = String(category || '').toLowerCase();
-  return normalized.includes('salary') || normalized.includes('payroll') || normalized.includes('staff');
-}
-
-function buildSelectOptions() {
-  const options = state.db.employees
-    .filter((employee) => isEmployeeActive(employee))
-    .map((employee) => `<option value="${employee.id}">${employee.fullName} · ${employee.id}</option>`)
-    .join('');
-  [dom.attendanceEmployee, dom.taskEmployee, dom.reportEmployee, dom.payrollAdjustmentEmployee].forEach((select) => {
-    if (select) select.innerHTML = options || '<option value="">No employees available</option>';
-  });
-}
-
-function setActiveView(viewId) {
-  document.querySelectorAll('.view-panel').forEach((panel) => panel.classList.toggle('active', panel.id === viewId));
-  document.querySelectorAll('#sidebarNav .nav-link').forEach((button) => button.classList.toggle('active', button.dataset.view === viewId));
-  dom.pageTitle.textContent = document.querySelector(`#sidebarNav .nav-link[data-view="${viewId}"] span`).textContent;
-  if (viewId === 'dashboardView') {
-    requestAnimationFrame(() => renderDashboard());
-  }
-  if (window.innerWidth < 1200) dom.sidebar.classList.remove('open');
-}
-
-function showToast(message, variant = 'primary') {
-  const toastId = `toast-${crypto.randomUUID()}`;
-  const container = dom.toastContainer;
-  const toastMarkup = `
-    <div class="toast align-items-center text-bg-${variant} border-0 mb-2" id="${toastId}" role="alert" aria-live="assertive" aria-atomic="true">
-      <div class="d-flex">
-        <div class="toast-body">${message}</div>
-        <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
-      </div>
-    </div>`;
-  container.insertAdjacentHTML('beforeend', toastMarkup);
-  const toastElement = document.getElementById(toastId);
-  const toast = bootstrap.Toast.getOrCreateInstance(toastElement, { delay: 2600 });
-  toast.show();
-  toastElement.addEventListener('hidden.bs.toast', () => toastElement.remove());
-}
-
-function renderDashboard() {
-  const totals = getPayrollTotals();
-  const todayEntries = getTodayAttendance();
-  const presentToday = todayEntries.filter((entry) => entry.status === 'Present').length;
-  const absentToday = todayEntries.filter((entry) => entry.status === 'Absent').length;
-
-  dom.totalEmployeesCard.textContent = state.db.employees.length;
-  dom.presentTodayCard.textContent = presentToday;
-  dom.absentTodayCard.textContent = absentToday;
-  dom.totalDeductionsCard.textContent = formatCurrency(totals.deductions);
-  dom.netSalaryCard.textContent = formatCurrency(totals.net);
-
-  renderTaskCountdowns();
-
-  const attendanceTrend = buildAttendanceTrend();
-  const taskData = buildTaskSummary();
-  const deductionData = buildDeductionSummary();
-  const financeData = buildFinanceSeries();
-
-  updateChart('attendanceChart', {
-    type: 'line',
-    data: {
-      labels: attendanceTrend.labels,
-      datasets: [
-        { label: 'Present', data: attendanceTrend.present, borderColor: '#10b981', borderWidth: 3.5, glowGradient: 'emerald', tension: 0.35, fill: true },
-        { label: 'Absent', data: attendanceTrend.absent, borderColor: '#ef4444', borderWidth: 3.5, glowGradient: 'rose', tension: 0.35, fill: true }
-      ]
-    },
-    options: chartOptions('line')
-  });
-
-  updateChart('tasksChart', {
-    type: 'doughnut',
-    data: {
-      labels: ['Complete', 'Incomplete'],
-      datasets: [{ data: [taskData.complete, taskData.incomplete], backgroundColor: ['#10b981', '#f59e0b'], borderWidth: 4, borderColor: '#0b0f19' }]
-    },
-    options: chartOptions('doughnut')
-  });
-
-  updateChart('deductionsChart', {
-    type: 'bar',
-    data: {
-      labels: ['Attendance', 'Reports', 'Tasks'],
-      datasets: [{ 
-        label: 'NGN', 
-        data: [deductionData.attendance, deductionData.reports, deductionData.tasks], 
-        backgroundColor: ['rgba(6, 182, 212, 0.75)', 'rgba(245, 158, 11, 0.75)', 'rgba(239, 68, 68, 0.75)'],
-        borderColor: 'rgba(255, 255, 255, 0.1)',
-        borderWidth: 1,
-        borderRadius: 8
-      }]
-    },
-    options: chartOptions('bar')
-  });
-
-  updateChart('financeChart', {
-    type: 'line',
-    data: {
-      labels: financeData.labels,
-      datasets: [
-        { label: 'Revenue', data: financeData.revenue, borderColor: '#10b981', borderWidth: 3, glowGradient: 'emerald', tension: 0.35, fill: true },
-        { label: 'Expenses', data: financeData.expenses, borderColor: '#ef4444', borderWidth: 3, glowGradient: 'rose', tension: 0.35, fill: true },
-        { label: 'Profit', data: financeData.profit, borderColor: '#8b5cf6', borderWidth: 3.5, glowGradient: 'violet', tension: 0.35, fill: true }
-      ]
-    },
-    options: chartOptions('line')
-  });
-}
-
-function buildAttendanceTrend() {
-  const labels = [];
-  const present = [];
-  const absent = [];
-
-  for (let offset = 6; offset >= 0; offset -= 1) {
-    const date = new Date();
-    date.setDate(date.getDate() - offset);
-    const iso = date.toISOString().slice(0, 10);
-    labels.push(date.toLocaleDateString('en-NG', { weekday: 'short' }));
-    const entries = state.db.attendance.filter((entry) => entry.date === iso);
-    present.push(entries.filter((entry) => entry.status === 'Present').length);
-    absent.push(entries.filter((entry) => entry.status === 'Absent').length);
-  }
-
-  return { labels, present, absent };
-}
-
-function buildTaskSummary() {
-  return state.db.tasks.reduce((accumulator, task) => {
-    if (Number(task.completion) >= 100) accumulator.complete += 1;
-    else accumulator.incomplete += 1;
-    return accumulator;
-  }, { complete: 0, incomplete: 0 });
-}
-
-function buildDeductionSummary() {
-  return {
-    attendance: state.db.attendance.reduce((sum, entry) => sum + getAttendancePenalty(entry), 0),
-    reports: state.db.reports.reduce((sum, report) => sum + getReportPenalty(report), 0),
-    tasks: state.db.tasks.reduce((sum, task) => sum + getTaskPenalty(task), 0),
-    missingReports: (state.db.missingReportPenalties || []).reduce((sum, p) => sum + Number(p.amount || 0), 0)
-  };
-}
-
-function buildFinanceSeries() {
-  const months = [];
-  const revenue = [];
-  const expenses = [];
-  const profit = [];
-
-  for (let offset = 5; offset >= 0; offset -= 1) {
-    const date = new Date();
-    date.setMonth(date.getMonth() - offset, 1);
-    const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-    months.push(date.toLocaleDateString('en-NG', { month: 'short' }));
-    const entries = state.db.income.filter((entry) => entry.date.startsWith(monthKey));
-    const revenueTotal = entries.filter((entry) => entry.type === 'Revenue').reduce((sum, entry) => sum + Number(entry.amount), 0);
-    const expenseTotal = entries.filter((entry) => entry.type === 'Expense').reduce((sum, entry) => sum + Number(entry.amount), 0);
-    revenue.push(revenueTotal);
-    expenses.push(expenseTotal);
-    profit.push(revenueTotal - expenseTotal);
-  }
-
-  return { labels: months, revenue, expenses, profit };
-}
-
-function updateChart(chartKey, config) {
-  const canvas = document.getElementById(chartKey);
-  if (!canvas) return;
-
-  if (state.charts[chartKey]) {
-    state.charts[chartKey].destroy();
-  }
-
-  const ctx = canvas.getContext('2d');
-  
-  if (config.data && config.data.datasets) {
-    config.data.datasets.forEach((dataset) => {
-      if (dataset.glowGradient === 'violet') {
-        const grad = ctx.createLinearGradient(0, 0, 0, 260);
-        grad.addColorStop(0, 'rgba(139, 92, 246, 0.4)');
-        grad.addColorStop(1, 'rgba(139, 92, 246, 0.01)');
-        dataset.backgroundColor = grad;
-      }
-      if (dataset.glowGradient === 'cyan') {
-        const grad = ctx.createLinearGradient(0, 0, 0, 260);
-        grad.addColorStop(0, 'rgba(6, 182, 212, 0.4)');
-        grad.addColorStop(1, 'rgba(6, 182, 212, 0.01)');
-        dataset.backgroundColor = grad;
-      }
-      if (dataset.glowGradient === 'emerald') {
-        const grad = ctx.createLinearGradient(0, 0, 0, 260);
-        grad.addColorStop(0, 'rgba(16, 185, 129, 0.4)');
-        grad.addColorStop(1, 'rgba(16, 185, 129, 0.01)');
-        dataset.backgroundColor = grad;
-      }
-      if (dataset.glowGradient === 'rose') {
-        const grad = ctx.createLinearGradient(0, 0, 0, 260);
-        grad.addColorStop(0, 'rgba(239, 68, 68, 0.4)');
-        grad.addColorStop(1, 'rgba(239, 68, 68, 0.01)');
-        dataset.backgroundColor = grad;
-      }
-      if (dataset.glowGradient === 'amber') {
-        const grad = ctx.createLinearGradient(0, 0, 0, 260);
-        grad.addColorStop(0, 'rgba(245, 158, 11, 0.4)');
-        grad.addColorStop(1, 'rgba(245, 158, 11, 0.01)');
-        dataset.backgroundColor = grad;
-      }
-    });
-  }
-
-  if (!config.plugins) config.plugins = [];
-  config.plugins.push({
-    id: 'shadow-3d',
-    beforeDatasetDraw: (chart) => {
-      const c = chart.ctx;
-      c.save();
-      c.shadowColor = 'rgba(0, 0, 0, 0.45)';
-      c.shadowBlur = 10;
-      c.shadowOffsetX = 3;
-      c.shadowOffsetY = 5;
-    },
-    afterDatasetDraw: (chart) => {
-      chart.ctx.restore();
-    }
-  });
-
-  state.charts[chartKey] = new Chart(canvas, config);
-}
-
-function chartOptions(type) {
-  const common = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        labels: { color: '#ecf2ff' }
-      }
-    }
-  };
-
-  if (type === 'doughnut') {
-    return {
-      ...common,
-      cutout: '68%'
-    };
-  }
-
-  return {
-    ...common,
-    scales: {
-      x: { ticks: { color: '#c7d2fe' }, grid: { color: 'rgba(255,255,255,0.06)' } },
-      y: { ticks: { color: '#c7d2fe' }, grid: { color: 'rgba(255,255,255,0.06)' } }
-    }
-  };
-}
-
-function renderEmployees() {
-  const query = dom.employeeSearch.value.trim().toLowerCase();
-  const payrollPeriodKey = getCurrentPayrollPeriodKey();
-  const payrollPeriodLabel = getPayrollPeriodLabel(payrollPeriodKey);
-  const rows = state.db.employees.filter((employee) => {
-      return [employee.id, employee.fullName, employee.email, employee.position, employee.department]
-      .some((field) => String(field).toLowerCase().includes(query));
-  }).map((employee) => {
-    const payroll = getEmployeeDeductions(employee.id, payrollPeriodKey);
-    const payrollPayment = getPayrollPayment(employee.id, payrollPeriodKey);
-    const active = isEmployeeActive(employee);
-    const office = (state.db.offices || []).find((o) => o.id === employee.officeId) || { name: 'Headquarters' };
-    return `
-      <tr>
-        <td><strong>${employee.id}</strong></td>
-        <td>${employee.fullName}</td>
-        <td>${employee.email || '—'}</td>
-        <td>${employee.username || '—'}</td>
-        <td>${employee.position}</td>
-        <td>${employee.department}</td>
-        <td>${office.name}</td>
-        <td>${payrollPayment?.paid ? `<span class="chip chip-success">Paid ${payrollPeriodLabel}</span>` : `<span class="chip chip-danger">Pending ${payrollPeriodLabel}</span>`}</td>
-        <td class="text-end">${formatCurrency(employee.salary)}</td>
-        <td>
-          <div class="small mb-2"><span class="chip ${active ? 'chip-success' : 'chip-danger'}">${active ? 'Active' : 'Deactivated'}</span></div>
-          <button class="btn btn-sm btn-soft me-1" data-action="edit-employee" data-id="${employee.id}">Edit</button>
-          <button class="btn btn-sm ${active ? 'btn-outline-secondary' : 'btn-primary'} me-1" data-action="toggle-employee-active" data-id="${employee.id}">${active ? 'Deactivate' : 'Reactivate'}</button>
-          <button class="btn btn-sm btn-outline-secondary" data-action="delete-employee" data-id="${employee.id}">Delete</button>
-          <button class="btn btn-sm btn-outline-secondary mt-1" data-action="show-employee-credentials" data-id="${employee.id}">Credentials</button>
-          <div class="small text-muted mt-2">Net salary: ${formatCurrency(payroll.finalSalary)}</div>
-        </td>
-      </tr>`;
-  }).join('');
-
-  dom.employeeTableBody.innerHTML = rows || '<tr><td colspan="9" class="text-center text-muted py-4">No employees found</td></tr>';
-  buildSelectOptions();
-}
-
-function renderAttendance() {
-  const query = dom.attendanceSearch.value.trim().toLowerCase();
-  const dateFilter = dom.attendanceDateFilter?.value || '';
-  const today = todayISO(0);
-  // Default: show only today. A date filter pins to a specific date.
-  // A search query searches across all records regardless of date.
-  const rows = [...state.db.attendance]
-    .sort((left, right) => new Date(right.date) - new Date(left.date))
-    .filter((entry) => {
-      if (query) {
-        return [entry.date, getEmployeeName(entry.employeeId), entry.status, entry.timeIn, entry.timeOut]
-          .some((field) => String(field).toLowerCase().includes(query));
-      }
-      return entry.date === (dateFilter || today);
-    })
-    .map((entry) => {
-      const late = isLate(entry);
-      const penalty = getAttendancePenalty(entry);
-      return `
-        <tr>
-          <td>${formatDate(entry.date)}</td>
-          <td>${getEmployeeName(entry.employeeId)}</td>
-          <td><span class="chip ${entry.status === 'Present' ? 'chip-success' : 'chip-danger'}">${entry.status}</span></td>
-          <td>${entry.timeIn || '—'} ${entry.status === 'Present' ? `<div class="small text-muted">Close: ${CLOSING_TIME}</div>` : ''}</td>
-          <td>${entry.timeOut || '—'}</td>
-          <td>${late ? '<span class="chip chip-warning">Late</span>' : '<span class="chip chip-neutral">On time</span>'}</td>
-          <td>${entry.permission ? '<span class="chip chip-success">Granted</span>' : '<span class="chip chip-neutral">No</span>'}</td>
-          <td class="text-end fw-bold">${formatCurrency(penalty)}</td>
-          <td>
-            <button class="btn btn-sm btn-soft me-1" data-action="edit-attendance" data-id="${entry.id}">Edit</button>
-            <button class="btn btn-sm btn-outline-secondary" data-action="delete-attendance" data-id="${entry.id}">Remove</button>
-          </td>
-        </tr>`;
-    }).join('');
-
-  dom.attendanceTableBody.innerHTML = rows || `<tr><td colspan="9" class="text-center text-muted py-4">${query ? 'No attendance logs found.' : 'No attendance records for today. Use the date filter or search to view other dates.'}</td></tr>`;
-  if (dom.adminAttendanceLockStatus) {
-    dom.adminAttendanceLockStatus.textContent = getAttendanceLockState() ? 'Locked' : 'Open';
-    dom.adminAttendanceLockStatus.className = `badge rounded-pill ${getAttendanceLockState() ? 'text-bg-danger' : 'text-bg-success'} px-3 py-2`;
-  }
-  if (dom.attendanceLockBtn) {
-    dom.attendanceLockBtn.textContent = getAttendanceLockState() ? 'Unlock Attendance' : 'Lock Attendance';
-  }
-}
-
-function renderTasks() {
-  const query = dom.taskSearch.value.trim().toLowerCase();
-  const showAll = dom.taskStatusFilter?.value === 'all';
-  const rows = [...state.db.tasks]
-    .sort((left, right) => new Date(left.deadline) - new Date(right.deadline))
-    .filter((task) => {
-      const textMatch = !query || [task.title, task.description, task.deadline, getEmployeeName(task.employeeId)]
-        .some((field) => String(field).toLowerCase().includes(query));
-      // Default: show only incomplete (active) tasks. Switch to "All" to include completed.
-      const statusMatch = showAll || query || Number(task.completion) < 100;
-      return textMatch && statusMatch;
-    })
-    .map((task) => {
-      const penalty = getTaskPenalty(task);
-      const overdue = isTaskOverdue(task);
-      const progressClass = Number(task.completion) === 100 ? 'chip-success' : overdue ? 'chip-danger' : 'chip-warning';
-      return `
-        <tr>
-          <td>
-            <div class="fw-semibold">${task.title}</div>
-            <div class="small text-muted">${task.description}</div>
-          </td>
-          <td>${getEmployeeName(task.employeeId)}</td>
-          <td>${formatDate(task.deadline)}</td>
-          <td class="text-end"><span class="chip ${progressClass}">${Number(task.completion)}%</span></td>
-          <td>${Number(task.completion) === 100 ? '<span class="chip chip-success">Complete</span>' : overdue ? '<span class="chip chip-danger">Overdue</span>' : '<span class="chip chip-warning">Incomplete</span>'}</td>
-          <td>${task.permission ? '<span class="chip chip-success">Granted</span>' : '<span class="chip chip-neutral">No</span>'}</td>
-          <td class="text-end fw-bold">${formatCurrency(penalty)}</td>
-          <td>
-            <button class="btn btn-sm btn-soft me-1" data-action="edit-task" data-id="${task.id}">Edit</button>
-            <button class="btn btn-sm btn-outline-secondary" data-action="delete-task" data-id="${task.id}">Delete</button>
-          </td>
-        </tr>`;
-    }).join('');
-
-  dom.taskTableBody.innerHTML = rows || `<tr><td colspan="8" class="text-center text-muted py-4">${showAll || query ? 'No tasks found.' : 'No active tasks. Switch to "All tasks" to view completed ones.'}</td></tr>`;
-}
-
-function renderReports() {
-  const query = dom.reportSearch.value.trim().toLowerCase();
-  const dateFilter = dom.reportDateFilter?.value || '';
-  const today = todayISO(0);
-  const rows = [...state.db.reports]
-    .sort((left, right) => new Date(right.submittedAt) - new Date(left.submittedAt))
-    .filter((report) => {
-      if (query) {
-        return [report.title, report.content, report.submittedAt, getEmployeeName(report.employeeId)]
-          .some((field) => String(field).toLowerCase().includes(query));
-      }
-      const targetDate = dateFilter || today;
-      return String(report.submittedAt || '').startsWith(targetDate);
-    })
-    .map((report) => {
-      const late = isLateReport(report);
-      const penalty = getReportPenalty(report);
-      return `
-        <tr>
-          <td>${formatDateTime(report.submittedAt)}</td>
-          <td>${getEmployeeName(report.employeeId)}</td>
-          <td>
-            <div class="fw-semibold">${report.title}</div>
-            <div class="small text-muted">${report.content.slice(0, 80)}${report.content.length > 80 ? '...' : ''}</div>
-          </td>
-          <td>${late ? '<span class="chip chip-danger">Late</span>' : '<span class="chip chip-success">On time</span>'}</td>
-          <td>${report.permission ? '<span class="chip chip-success">Granted</span>' : '<span class="chip chip-neutral">No</span>'}</td>
-          <td class="text-end fw-bold">${formatCurrency(penalty)}</td>
-          <td>
-            <button class="btn btn-sm btn-soft me-1" data-action="edit-report" data-id="${report.id}">Edit</button>
-            <button class="btn btn-sm btn-outline-secondary" data-action="delete-report" data-id="${report.id}">Delete</button>
-          </td>
-        </tr>`;
-    }).join('');
-
-  dom.reportTableBody.innerHTML = rows || `<tr><td colspan="7" class="text-center text-muted py-4">${query ? 'No reports found.' : 'No reports submitted today. Use the date filter or search to view other dates.'}</td></tr>`;
-}
-
-function renderMissingReportPenalties() {
-  const tableBody = dom.missingReportPenaltiesTableBody;
-  if (!tableBody) return;
-
-  const rows = [...(state.db.missingReportPenalties || [])]
-    .sort((left, right) => new Date(right.weekSunday) - new Date(left.weekSunday))
-    .map((penalty) => {
-      return `
-        <tr>
-          <td>${formatDate(penalty.weekSunday)}</td>
-          <td>${getEmployeeName(penalty.employeeId)}</td>
-          <td class="text-end fw-bold">${formatCurrency(penalty.amount)}</td>
-          <td>${penalty.permission ? '<span class="chip chip-success">Granted (Waived)</span>' : '<span class="chip chip-neutral">No</span>'}</td>
-          <td>
-            <button class="btn btn-sm ${penalty.permission ? 'btn-soft' : 'btn-primary'} me-1" data-action="toggle-missing-report-permission" data-id="${penalty.id}">
-              ${penalty.permission ? 'Revoke' : 'Grant'}
-            </button>
-            <button class="btn btn-sm btn-outline-secondary" data-action="delete-missing-report-penalty" data-id="${penalty.id}">Remove</button>
-          </td>
-        </tr>`;
-    }).join('');
-
-  tableBody.innerHTML = rows || '<tr><td colspan="5" class="text-center text-muted py-4">No missing report penalties recorded.</td></tr>';
-}
-
-function renderFinance() {
-  const range = dom.financeRangeFilter.value;
-  const selected = buildFinanceSummary(range);
-  dom.incomeTableBody.innerHTML = selected.rows || '<tr><td colspan="6" class="text-center text-muted py-4">No finance entries found</td></tr>';
-  dom.revenueMetric.textContent = formatCurrency(selected.revenue);
-  dom.expensesMetric.textContent = formatCurrency(selected.expenses);
-  dom.profitMetric.textContent = formatCurrency(selected.revenue - selected.expenses);
-}
-
-function buildFinanceSummary(range) {
-  const now = new Date();
-  let filtered = [...state.db.income];
-
-  if (range === 'monthly') {
-    const key = now.toISOString().slice(0, 7);
-    filtered = filtered.filter((entry) => entry.date.startsWith(key));
-  } else if (range === 'fourMonths') {
-    const start = new Date(now);
-    start.setMonth(start.getMonth() - 3, 1);
-    filtered = filtered.filter((entry) => new Date(entry.date) >= start);
-  } else if (range === 'yearly') {
-    const year = now.getFullYear();
-    filtered = filtered.filter((entry) => new Date(entry.date).getFullYear() === year);
-  }
-
-  const revenue = filtered.filter((entry) => entry.type === 'Revenue').reduce((sum, entry) => sum + Number(entry.amount), 0);
-  const expenses = filtered.filter((entry) => entry.type === 'Expense').reduce((sum, entry) => sum + Number(entry.amount), 0);
-
-  const rows = filtered
-    .sort((left, right) => new Date(right.date) - new Date(left.date))
-    .map((entry) => `
-      <tr>
-        <td>${formatDate(entry.date)}</td>
-        <td><span class="chip ${entry.type === 'Revenue' ? 'chip-success' : 'chip-danger'}">${entry.type}</span></td>
-        <td>${entry.category}</td>
-        <td>${entry.description || '—'}</td>
-        <td class="text-end fw-bold">${formatCurrency(entry.amount)}</td>
-        <td><button class="btn btn-sm btn-outline-secondary" data-action="delete-income" data-id="${entry.id}">Delete</button></td>
-      </tr>`).join('');
-
-  return { rows, revenue, expenses };
-}
-
-function getPayrollAdjustmentTotals() {
-  return state.db.payrollAdjustments.reduce((accumulator, entry) => {
-    const amount = Number(entry.amount || 0);
-    if (entry.type === 'Bonus') accumulator.bonus += amount;
-    if (entry.type === 'Loan') accumulator.loan += amount;
-    if (entry.type === 'Advance') accumulator.advance += amount;
-    return accumulator;
-  }, { loan: 0, advance: 0, bonus: 0 });
-}
-
-function renderPayrollAdjustments() {
-  const query = dom.payrollAdjustmentSearch.value.trim().toLowerCase();
-  const dateFilter = dom.payrollAdjDateFilter?.value || '';
-  const today = todayISO(0);
-  const payrollPeriodKey = getSelectedPayrollPeriodKey();
-  const payrollPeriodLabel = getPayrollPeriodLabel(payrollPeriodKey);
-  populatePayrollPeriodFilter();
-  const rows = [...state.db.payrollAdjustments]
-    .sort((left, right) => new Date(right.date) - new Date(left.date))
-    .filter((entry) => {
-      if (query) {
-        return [entry.date, getEmployeeName(entry.employeeId), entry.type, entry.notes]
-          .some((field) => String(field).toLowerCase().includes(query));
-      }
-      return entry.date === (dateFilter || today);
-    })
-    .map((entry) => `
-      <tr>
-        <td>${formatDate(entry.date)}</td>
-        <td>${getEmployeeName(entry.employeeId)}</td>
-        <td><span class="chip ${entry.type === 'Bonus' ? 'chip-success' : 'chip-warning'}">${entry.type}</span></td>
-        <td class="text-end fw-bold">${formatCurrency(entry.amount)}</td>
-        <td>${entry.notes || '—'}</td>
-        <td>
-          <button class="btn btn-sm btn-soft me-1" data-action="edit-payroll-adjustment" data-id="${entry.id}">Edit</button>
-          <button class="btn btn-sm btn-outline-secondary" data-action="delete-payroll-adjustment" data-id="${entry.id}">Delete</button>
-        </td>
-      </tr>`).join('');
-
-  const totals = getPayrollAdjustmentTotals();
-  dom.payrollAdjustmentTableBody.innerHTML = rows || `<tr><td colspan="6" class="text-center text-muted py-4">${query ? 'No payroll adjustments found.' : 'No payroll adjustments for today. Use the date filter or search to view other dates.'}</td></tr>`;
-  dom.payrollLoansMetric.textContent = formatCurrency(totals.loan);
-  dom.payrollAdvancesMetric.textContent = formatCurrency(totals.advance);
-  dom.payrollBonusesMetric.textContent = formatCurrency(totals.bonus);
-  dom.payrollNetMetric.textContent = formatCurrency(getPayrollTotals().net);
-  if (dom.payrollPeriodLabel) dom.payrollPeriodLabel.textContent = payrollPeriodLabel;
-  if (dom.payrollPeriodFilter && !dom.payrollPeriodFilter.value) dom.payrollPeriodFilter.value = payrollPeriodKey;
-
-  const summaryRows = state.db.employees.map((employee) => {
-    const summary = getEmployeeDeductions(employee.id, payrollPeriodKey);
-    const payment = getPayrollPayment(employee.id, payrollPeriodKey);
-    return `
-      <tr>
-        <td>${employee.fullName}</td>
-        <td>${payrollPeriodLabel}</td>
-        <td class="text-end">${formatCurrency(summary.originalSalary)}</td>
-        <td class="text-end">${formatCurrency(summary.bonus)}</td>
-        <td class="text-end">${formatCurrency(summary.loanAndAdvance)}</td>
-        <td class="text-end">${formatCurrency(summary.otherDeductions)}${summary.carryIn > 0 ? `<div class="small text-muted">+ carry ${formatCurrency(summary.carryIn)}</div>` : ''}</td>
-        <td class="text-end fw-bold">${formatCurrency(summary.finalSalary)}</td>
-        <td class="text-end">${formatCurrency(summary.carryForward)}</td>
-        <td>${payment?.paid ? `<span class="chip chip-success">Paid</span><div class="small text-muted mt-1">${formatDate(payment.paidAt)}</div>` : '<span class="chip chip-danger">Pending</span>'}${summary.carryForward > 0 ? `<div class="small text-muted mt-1">Carry forward: ${formatCurrency(summary.carryForward)}</div>` : ''}</td>
-        <td>
-          <button class="btn btn-sm ${payment?.paid ? 'btn-soft' : 'btn-primary'}" data-action="toggle-payroll-payment" data-employee-id="${employee.id}" data-period-key="${payrollPeriodKey}" data-paid="${payment?.paid ? 'true' : 'false'}">
-            ${payment?.paid ? `Mark ${payrollPeriodLabel} Unpaid` : `Mark ${payrollPeriodLabel} Paid`}
-          </button>
-        </td>
-      </tr>`;
-  }).join('');
-
-  dom.payrollSummaryTableBody.innerHTML = summaryRows || '<tr><td colspan="10" class="text-center text-muted py-4">No employees found</td></tr>';
-}
-
-function renderBudget() {
-  const payroll = getPayrollTotals();
-  const operations = getOperationsActual();
-  const salaryBudget = Number(state.db.budget.salary || 0);
-  const operationsBudget = Number(state.db.budget.operations || 0);
-
-  dom.salaryBudget.value = salaryBudget;
-  dom.operationsBudget.value = operationsBudget;
-  dom.budgetSalaryValue.textContent = formatCurrency(salaryBudget);
-  dom.budgetOperationsValue.textContent = formatCurrency(operationsBudget);
-  dom.budgetSalaryActual.textContent = formatCurrency(payroll.salaryActual);
-  dom.budgetOperationsActual.textContent = formatCurrency(operations);
-
-  dom.budgetSalaryStatus.textContent = payroll.salaryActual > salaryBudget ? `Exceeded by ${formatCurrency(payroll.salaryActual - salaryBudget)}` : `Remaining ${formatCurrency(salaryBudget - payroll.salaryActual)}`;
-  dom.budgetOperationsStatus.textContent = operations > operationsBudget ? `Exceeded by ${formatCurrency(operations - operationsBudget)}` : `Remaining ${formatCurrency(operationsBudget - operations)}`;
-
-  const alerts = [];
-  if (payroll.salaryActual > salaryBudget) {
-    alerts.push(`Salary budget exceeded by ${formatCurrency(payroll.salaryActual - salaryBudget)}.`);
-  }
-  if (operations > operationsBudget) {
-    alerts.push(`Operations budget exceeded by ${formatCurrency(operations - operationsBudget)}.`);
-  }
-  if (!alerts.length) {
-    alerts.push('Both budget categories are within target for the selected data set.');
-  }
-
-  dom.budgetAlerts.innerHTML = alerts.map((message) => `<div class="alert-item">${message}</div>`).join('');
-}
-
-function renderStaffPortal() {
-  const employee = getCurrentEmployee();
-  const payrollPeriodKey = getSelectedPayrollPeriodKey();
-  const payrollPeriodLabel = getPayrollPeriodLabel(payrollPeriodKey);
-  const inactive = Boolean(employee && !isEmployeeActive(employee));
-
-  if (dom.staffInactiveState) dom.staffInactiveState.classList.toggle('d-none', !inactive);
-  if (dom.staffActiveContent) dom.staffActiveContent.classList.toggle('d-none', inactive);
-
-  if (dom.staffAttendanceLockStatus) {
-    dom.staffAttendanceLockStatus.textContent = getAttendanceLockState() ? 'Locked' : 'Open';
-    dom.staffAttendanceLockStatus.className = `badge rounded-pill ${getAttendanceLockState() ? 'text-bg-danger' : 'text-bg-success'} px-3 py-2`;
-  }
-
-  if (inactive) {
-    return;
-  }
-
-  if (!employee) {
-    dom.staffPortalStatus.textContent = 'No employee profile is linked to this account yet.';
-    dom.staffTasksBody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">No linked employee profile found</td></tr>';
-    dom.staffReportsSummary.textContent = 'Unavailable';
-    dom.staffReportsDetail.textContent = 'Weekly report status unavailable until an employee profile is linked.';
-    dom.staffAttendanceSummary.textContent = 'Unavailable';
-    dom.staffAttendanceDetail.textContent = 'Attendance actions are unavailable until an employee profile is linked.';
-    dom.staffDeductionsBody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-4">No linked employee profile found</td></tr>';
-    dom.staffDailyAttendanceBody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">No attendance history available</td></tr>';
-    dom.staffMonthlyReportsBody.innerHTML = '<tr><td colspan="2" class="text-center text-muted py-4">No report history available</td></tr>';
-    dom.staffColleaguesBody.innerHTML = '<tr><td colspan="2" class="text-center text-muted py-4">No staff records available</td></tr>';
-    dom.staffSalaryValue.textContent = formatCurrency(0);
-    dom.staffActualSalaryValue.textContent = formatCurrency(0);
-    if (dom.staffSalaryPeriodLabel) dom.staffSalaryPeriodLabel.textContent = payrollPeriodLabel;
-    dom.staffSalaryStatus.textContent = 'Unavailable';
-    dom.staffSalaryStatus.className = 'badge rounded-pill text-bg-secondary px-3 py-2';
-    return;
-  }
-
-
-  const todayRecord = getTodayAttendanceForEmployee(employee.id);
-  const isAbsentToday = todayRecord?.status === 'Absent';
-
-  // Disable / enable attendance buttons based on today's status.
-  if (dom.staffCheckInBtn) {
-    dom.staffCheckInBtn.disabled = isAbsentToday;
-    dom.staffCheckInBtn.title = isAbsentToday ? 'You are recorded as absent today' : '';
-  }
-  if (dom.staffCheckOutBtn) {
-    dom.staffCheckOutBtn.disabled = isAbsentToday;
-    dom.staffCheckOutBtn.title = isAbsentToday ? 'You are recorded as absent today' : '';
-  }
-
-  const payroll = getEmployeeDeductions(employee.id, payrollPeriodKey);
-  const payrollPayment = getPayrollPayment(employee.id, payrollPeriodKey);
-  const tasks = getCurrentEmployeeTasks();
-  const reports = getCurrentEmployeeReports();
-  const attendance = getCurrentEmployeeAttendance();
-  const dailyAttendance = getCurrentEmployeeDailyAttendance();
-  const monthlyReports = getMonthlyReportCounts(employee.id);
-  const colleagues = getStaffPresenceToday();
-  const latestAttendance = attendance.slice().sort((left, right) => new Date(right.date) - new Date(left.date))[0] || null;
-
-  dom.staffPortalStatus.textContent = `${employee.fullName} · ${employee.position} · ${employee.department}`;
-  dom.staffAttendanceSummary.textContent = latestAttendance ? formatDate(latestAttendance.date) : 'No logs';
-
-  if (isAbsentToday) {
-    dom.staffAttendanceDetail.textContent = 'You have been recorded as absent today by an administrator. An ₦8,000 deduction has been applied. Sign-in is not available.';
-  } else {
-    dom.staffAttendanceDetail.textContent = latestAttendance
-      ? `Last attendance: ${formatDate(latestAttendance.date)} (${latestAttendance.status}${latestAttendance.timeIn ? `, in ${latestAttendance.timeIn}` : ''}${latestAttendance.timeOut ? `, out ${latestAttendance.timeOut}` : ''})`
-      : 'No attendance record has been logged yet.';
-  }
-  dom.staffReportsSummary.textContent = `${getCurrentMonthReportCount()} this month`;
-  dom.staffReportsDetail.textContent = hasSubmittedCurrentWeekReport()
-    ? 'Weekly report submitted for the current week.'
-    : 'Weekly report not yet submitted for the current week.';
-  dom.staffSalaryValue.textContent = formatCurrency(payroll.payableBalance);
-  dom.staffActualSalaryValue.textContent = formatCurrency(payroll.originalSalary);
-  if (dom.staffSalaryPeriodLabel) dom.staffSalaryPeriodLabel.textContent = payrollPeriodLabel;
-  dom.staffSalaryStatus.textContent = payrollPayment?.paid
-    ? `Paid for ${payrollPeriodLabel}${payrollPayment.paidAt ? ` on ${formatDate(payrollPayment.paidAt)}` : ''}`
-    : `Pending for ${payrollPeriodLabel}`;
-  dom.staffSalaryStatus.className = `badge rounded-pill px-3 py-2 ${payrollPayment?.paid ? 'text-bg-success' : 'text-bg-danger'}`;
-  if (payroll.carryForward > 0 && !payrollPayment?.paid) {
-    dom.staffSalaryStatus.textContent += ` · carry forward ${formatCurrency(payroll.carryForward)}`;
-  }
-
-  dom.staffTasksBody.innerHTML = tasks.length
-    ? tasks.map((task) => `
-      <tr>
-        <td>
-          <div class="fw-semibold">${task.title}</div>
-          <div class="small text-muted">${task.description || '—'}</div>
-        </td>
-        <td>${formatDate(task.deadline)}</td>
-        <td class="text-end"><span class="chip ${Number(task.completion) === 100 ? 'chip-success' : 'chip-warning'}">${Number(task.completion)}%</span></td>
-        <td>${Number(task.completion) === 100 ? '<span class="chip chip-success">Complete</span>' : isTaskOverdue(task) ? '<span class="chip chip-danger">Overdue</span>' : '<span class="chip chip-warning">In progress</span>'}</td>
-      </tr>`).join('')
-    : '<tr><td colspan="4" class="text-center text-muted py-4">No tasks assigned</td></tr>';
-
-  dom.staffReportsBody.innerHTML = reports.length
-    ? reports.map((report) => `
-      <tr>
-        <td>${formatDateTime(report.submittedAt)}</td>
-        <td>${report.title}</td>
-        <td>${report.content.slice(0, 80)}${report.content.length > 80 ? '...' : ''}</td>
-      </tr>`).join('')
-    : '<tr><td colspan="3" class="text-center text-muted py-4">No weekly reports submitted</td></tr>';
-
-  const staffDeductionRows = getStaffDeductionRows(employee.id).filter((item) => item.amount > 0 || item.label === 'Bonus adjustment');
-  dom.staffDeductionsBody.innerHTML = staffDeductionRows.length
-    ? staffDeductionRows.map((item) => `
-      <tr>
-        <td>${item.label}</td>
-        <td>${item.purpose}</td>
-        <td class="text-end fw-bold">${formatCurrency(item.amount)}</td>
-      </tr>`).join('')
-    : '<tr><td colspan="3" class="text-center text-muted py-4">No deductions recorded</td></tr>';
-
-  dom.staffDailyAttendanceBody.innerHTML = dailyAttendance.length
-    ? dailyAttendance.map((entry) => `
-      <tr>
-        <td>${formatDate(entry.date)}</td>
-        <td>${entry.timeIn || '—'}</td>
-        <td>${entry.timeOut || '—'}</td>
-        <td><span class="chip ${entry.status === 'Present' ? 'chip-success' : 'chip-danger'}">${entry.status}</span></td>
-      </tr>`).join('')
-    : '<tr><td colspan="4" class="text-center text-muted py-4">No attendance history available</td></tr>';
-
-  dom.staffMonthlyReportsBody.innerHTML = monthlyReports.length
-    ? monthlyReports.map((entry) => `
-      <tr>
-        <td>${entry.month}</td>
-        <td class="text-end fw-bold">${entry.count}</td>
-      </tr>`).join('')
-    : '<tr><td colspan="2" class="text-center text-muted py-4">No report history available</td></tr>';
-
-  dom.staffColleaguesBody.innerHTML = colleagues.length
-    ? colleagues.map((entry) => `
-      <tr>
-        <td>${entry.employee.fullName}</td>
-        <td><span class="chip ${entry.present ? 'chip-success' : 'chip-danger'}">${entry.present ? 'Present' : 'Absent'}</span></td>
-      </tr>`).join('')
-    : '<tr><td colspan="2" class="text-center text-muted py-4">No staff records available</td></tr>';
-
-  renderStaffTaskCountdowns();
+  if (dom.pageTitle) dom.pageTitle.textContent = titles[viewId] || 'HR Management Suite';
+  if (dom.sidebar) dom.sidebar.classList.remove('open');
+  const backdrop = document.getElementById('sidebarBackdrop');
+  if (backdrop) backdrop.classList.remove('show');
 }
 
-function renderDerivedViews() {
+export function refreshAll() {
+  renderEmployees(getEmployeeDeductions);
   renderAttendance();
   renderTasks();
-  renderReports();
+  renderTaskCountdowns();
   renderFinance();
   renderPayrollAdjustments();
-  renderBudget();
+  renderBudget(getPayrollTotals);
+  renderManagementIssues();
+  renderSupervisorsView();
+  renderDevelopersView();
+  renderWelfareHrView();
+  renderSchoolsView();
   renderDashboard();
-  renderStaffPortal();
-}
-
-function configureRoleUi() {
-  const staffMode = isStaffSession();
-  const adminOnlyViews = ['dashboardView', 'employeesView', 'attendanceView', 'tasksView', 'reportsView', 'financeView', 'payrollView', 'budgetView', 'officesView'];
-  const staffViews = ['staffView'];
-
-  document.querySelectorAll('#sidebarNav [data-view]').forEach((button) => {
-    const isStaffButton = button.dataset.view === 'staffView';
-    button.classList.toggle('d-none', staffMode ? !isStaffButton : isStaffButton);
-  });
-
-  adminOnlyViews.forEach((viewId) => {
-    const panel = document.getElementById(viewId);
-    if (panel) panel.classList.toggle('d-none', staffMode);
-  });
-
-  staffViews.forEach((viewId) => {
-    const panel = document.getElementById(viewId);
-    if (panel) panel.classList.toggle('d-none', !staffMode);
-  });
-
-  if (staffMode) {
-    dom.pageTitle.textContent = 'Staff Portal';
-    setActiveView('staffView');
-  } else {
-    setActiveView('dashboardView');
-  }
-}
-
-function resetEmployeeForm() {
-  dom.employeeForm.reset();
-  dom.employeeId.value = '';
-  dom.employeeEmail.value = '';
-  if (dom.employeeOffice && dom.employeeOffice.options.length) {
-    dom.employeeOffice.selectedIndex = 0;
-  }
-  dom.employeeFormTitle.textContent = 'Add Employee';
-  dom.employeeSubmitBtn.textContent = 'Save Employee';
-  if (dom.employeeCredentialBox) {
-    dom.employeeCredentialBox.classList.add('d-none');
-    dom.employeeCredentialBox.textContent = '';
-  }
-}
-
-function resetTaskForm() {
-  dom.taskForm.reset();
-  dom.taskId.value = '';
-  dom.taskProgress.value = 10;
-  if (dom.taskPermission) dom.taskPermission.value = 'No';
-  dom.taskFormTitle.textContent = 'Assign Task';
-}
-
-async function upsertEmployee(event) {
-  event.preventDefault();
-  const id = dom.employeeId.value || getLatestEmployeeId();
-  const existingEmployee = state.db.employees.find((item) => item.id === id) || null;
-  const email = dom.employeeEmail.value.trim().toLowerCase() || existingEmployee?.email || buildEmployeeEmail(dom.employeeName.value.trim(), id);
-  const credentials = buildEmployeeCredentials({
-    id,
-    fullName: dom.employeeName.value.trim(),
-    email
-  });
-  const employee = {
-    id,
-    fullName: dom.employeeName.value.trim(),
-    email,
-    username: credentials.username,
-    position: dom.employeePosition.value.trim(),
-    department: dom.employeeDepartment.value.trim(),
-    officeId: dom.employeeOffice.value,
-    salary: Number(dom.employeeSalary.value),
-    active: existingEmployee ? existingEmployee.active !== false : true
-  };
-
-  const userRecord = {
-    name: employee.fullName,
-    username: employee.email,
-    email: employee.email,
-    role: 'staff',
-    employeeId: employee.id,
-    active: employee.active,
-    passwordHash: await hashPassword(employee.id)
-  };
-
-  if (dom.employeeId.value) {
-    state.db.employees = state.db.employees.map((item) => item.id === id ? employee : item);
-    state.db.users = state.db.users.map((item) => item.employeeId === id ? { ...item, ...userRecord } : item);
-    showToast('Employee updated successfully.', 'success');
-  } else {
-    state.db.employees.push({ ...employee, createdAt: new Date().toISOString() });
-    state.db.users.push(userRecord);
-    showToast('Employee added successfully.', 'success');
-  }
-
-  saveDatabase();
-  resetEmployeeForm();
-  if (dom.employeeCredentialBox) {
-    dom.employeeCredentialBox.classList.remove('d-none');
-    dom.employeeCredentialBox.innerHTML = `Login created. Username: <strong>${credentials.username}</strong>. Password: <strong>${credentials.password}</strong>.`;
-  }
-  refreshAll();
-}
-
-function resetAttendanceForm() {
-  dom.attendanceForm.reset();
-  dom.attendanceId.value = '';
-  dom.attendanceDate.value = todayISO(0);
-  dom.attendanceStatus.value = 'Present';
-  dom.attendanceFormTitle.textContent = 'Log Attendance';
-  if (dom.attendanceSubmitBtn) dom.attendanceSubmitBtn.textContent = 'Save Attendance';
-}
-
-function upsertAttendance(event) {
-  event.preventDefault();
-  const editId = dom.attendanceId.value;
-  const fields = {
-    employeeId: dom.attendanceEmployee.value,
-    date: dom.attendanceDate.value,
-    status: dom.attendanceStatus.value,
-    permission: dom.attendancePermission.value === 'Yes',
-    timeIn: dom.attendanceTimeIn.value,
-    timeOut: dom.attendanceTimeOut.value
-  };
-
-  if (editId) {
-    // Editing an existing record by ID
-    const index = state.db.attendance.findIndex((item) => item.id === editId);
-    if (index >= 0) {
-      state.db.attendance[index] = { ...state.db.attendance[index], ...fields };
-      showToast('Attendance updated.', 'success');
-    }
-  } else {
-    // New record — upsert by employee + date
-    const existingIndex = state.db.attendance.findIndex((item) => item.employeeId === fields.employeeId && item.date === fields.date);
-    if (existingIndex >= 0) {
-      state.db.attendance[existingIndex] = { ...state.db.attendance[existingIndex], ...fields };
-      showToast('Attendance updated.', 'success');
-    } else {
-      state.db.attendance.push({ id: crypto.randomUUID(), ...fields });
-      showToast('Attendance logged.', 'success');
-    }
-  }
-
-  saveDatabase();
-  resetAttendanceForm();
-  refreshAll();
-}
-
-function upsertTask(event) {
-  event.preventDefault();
-  const task = {
-    id: dom.taskId.value || crypto.randomUUID(),
-    employeeId: dom.taskEmployee.value,
-    title: dom.taskTitle.value.trim(),
-    description: dom.taskDescription.value.trim(),
-    deadline: dom.taskDeadline.value,
-    completion: Number(dom.taskProgress.value),
-    permission: dom.taskPermission.value === 'Yes',
-    createdAt: new Date().toISOString()
-  };
-
-  const index = state.db.tasks.findIndex((item) => item.id === task.id);
-  if (index >= 0) {
-    state.db.tasks[index] = { ...state.db.tasks[index], ...task };
-    showToast('Task updated.', 'success');
-  } else {
-    state.db.tasks.push(task);
-    showToast('Task assigned.', 'success');
-  }
-
-  saveDatabase();
-  resetTaskForm();
-  refreshAll();
-}
-
-function resetReportForm() {
-  if (dom.reportForm) dom.reportForm.reset();
-  if (dom.staffReportForm) dom.staffReportForm.reset();
-  if (dom.reportId) dom.reportId.value = '';
-  if (dom.reportPermission) dom.reportPermission.value = 'No';
-  if (dom.reportFormTitle) dom.reportFormTitle.textContent = 'Weekly Report Submission';
-  if (dom.reportSubmitBtn) dom.reportSubmitBtn.textContent = 'Submit Report';
-  if (dom.staffReportSubmitBtn) dom.staffReportSubmitBtn.textContent = 'Submit Report';
-}
-
-function submitReport(event) {
-  event.preventDefault();
-  const isStaffForm = event.currentTarget.id === 'staffReportForm';
-  const reportId = isStaffForm ? crypto.randomUUID() : (dom.reportId.value || crypto.randomUUID());
-  const employeeId = isStaffForm ? getCurrentEmployeeId() : dom.reportEmployee.value;
-  const title = isStaffForm ? dom.staffReportTitle.value.trim() : dom.reportTitle.value.trim();
-  const content = isStaffForm ? dom.staffReportContent.value.trim() : dom.reportContent.value.trim();
-  const existingIndex = state.db.reports.findIndex((item) => item.id === reportId);
-  const existing = existingIndex >= 0 ? state.db.reports[existingIndex] : null;
-
-  if (!employeeId) {
-    showToast('No staff profile is linked to this account.', 'danger');
-    return;
-  }
-
-  const report = {
-    id: reportId,
-    employeeId,
-    title,
-    content,
-    permission: isStaffForm ? false : (dom.reportPermission.value === 'Yes'),
-    submittedAt: existing?.submittedAt || new Date().toISOString(),
-    updatedAt: existing ? new Date().toISOString() : null,
-    updatedBy: state.session?.email || state.session?.name || null
-  };
-
-  if (existingIndex >= 0) {
-    state.db.reports[existingIndex] = { ...state.db.reports[existingIndex], ...report };
-    showToast('Report updated.', 'success');
-  } else {
-    state.db.reports.push(report);
-    showToast('Report submitted.', 'success');
-  }
-
-  saveDatabase();
-  resetReportForm();
-  refreshAll();
-}
-
-function submitIncome(event) {
-  event.preventDefault();
-  state.db.income.push({
-    id: crypto.randomUUID(),
-    type: dom.incomeType.value,
-    category: dom.incomeCategory.value.trim(),
-    amount: Number(dom.incomeAmount.value),
-    date: dom.incomeDate.value,
-    description: dom.incomeDescription.value.trim()
-  });
-  saveDatabase();
-  dom.incomeForm.reset();
-  dom.incomeType.value = 'Revenue';
-  dom.incomeDate.value = todayISO(0);
-  showToast('Finance entry saved.', 'success');
-  refreshAll();
-}
-
-function submitPayrollAdjustment(event) {
-  event.preventDefault();
-  const adjustmentId = dom.payrollAdjustmentId.value || crypto.randomUUID();
-  const entry = {
-    id: adjustmentId,
-    employeeId: dom.payrollAdjustmentEmployee.value,
-    type: dom.payrollAdjustmentType.value,
-    amount: Number(dom.payrollAdjustmentAmount.value),
-    date: dom.payrollAdjustmentDate.value,
-    notes: dom.payrollAdjustmentNotes.value.trim()
-  };
-
-  const existingIndex = state.db.payrollAdjustments.findIndex((item) => item.id === adjustmentId);
-  if (existingIndex >= 0) {
-    state.db.payrollAdjustments[existingIndex] = entry;
-    showToast('Payroll adjustment updated.', 'success');
-  } else {
-    state.db.payrollAdjustments.push(entry);
-    showToast('Payroll adjustment saved.', 'success');
-  }
-
-  saveDatabase();
-  dom.payrollAdjustmentForm.reset();
-  dom.payrollAdjustmentId.value = '';
-  dom.payrollAdjustmentDate.value = todayISO(0);
-  dom.payrollAdjustmentType.value = 'Loan';
-  dom.payrollAdjustmentFormTitle.textContent = 'Payroll Adjustments';
-  dom.payrollAdjustmentSubmitBtn.textContent = 'Save Adjustment';
-  refreshAll();
-}
-
-function getBrowserLocation() {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error('Geolocation is not supported by your browser.'));
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (position) => resolve(position),
-      (error) => reject(error),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    );
-  });
-}
-
-function getDistanceMeters(lat1, lon1, lat2, lon2) {
-  const R = 6371e3; // Earth radius in meters
-  const phi1 = lat1 * Math.PI / 180;
-  const phi2 = lat2 * Math.PI / 180;
-  const deltaPhi = (lat2 - lat1) * Math.PI / 180;
-  const deltaLambda = (lon2 - lon1) * Math.PI / 180;
-
-  const a = Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
-            Math.cos(phi1) * Math.cos(phi2) *
-            Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-  return R * c;
-}
-
-async function submitStaffAttendance(action) {
-  const employee = getCurrentEmployee();
-  if (!employee) {
-    showToast('No staff profile is linked to this account.', 'danger');
-    return;
-  }
-
-  const todayRecord = getTodayAttendanceForEmployee(employee.id);
-  if (todayRecord && todayRecord.status === 'Absent') {
-    showToast('You are recorded as absent today. Sign-in and sign-out are not available.', 'danger');
-    return;
-  }
-
-  if (action === 'check-in') {
-    if (getAttendanceLockState()) {
-      showToast('Attendance locked. You are late.', 'danger');
-      return;
-    }
-
-    const officeId = employee.officeId || 'off-hq';
-    const office = (state.db.offices || []).find((o) => o.id === officeId);
-    if (!office) {
-      showToast('No office location configuration found for your account. Please contact Admin.', 'danger');
-      return;
-    }
-
-    showToast('Verifying GPS location, please wait...', 'warning');
-
-    try {
-      const position = await getBrowserLocation();
-      const userLat = position.coords.latitude;
-      const userLon = position.coords.longitude;
-      const accuracy = position.coords.accuracy;
-
-      const distance = getDistanceMeters(userLat, userLon, office.latitude, office.longitude);
-      
-      if (distance > office.radius) {
-        showToast(`Clock-in denied. You are outside the office radius (Distance: ${Math.round(distance)}m, Limit: ${office.radius}m).`, 'danger');
-        return;
-      }
-      
-      state.lastCheckInLocation = { latitude: userLat, longitude: userLon, accuracy };
-      showToast(`Location verified. Distance to office: ${Math.round(distance)}m.`, 'success');
-    } catch (err) {
-      console.error(err);
-      showToast('Check-in failed. Please grant browser location access and try again.', 'danger');
-      return;
-    }
-  }
-
-  const today = todayISO(0);
-  const now = new Date().toTimeString().slice(0, 5);
-  const existingIndex = state.db.attendance.findIndex((item) => item.employeeId === employee.id && item.date === today);
-
-  const telemetry = state.lastCheckInLocation || {};
-  delete state.lastCheckInLocation;
-
-  if (existingIndex >= 0) {
-    const existing = state.db.attendance[existingIndex];
-    state.db.attendance[existingIndex] = {
-      ...existing,
-      employeeId: employee.id,
-      date: today,
-      status: 'Present',
-      permission: existing.permission || false,
-      timeIn: action === 'check-in' ? (existing.timeIn || now) : existing.timeIn,
-      timeOut: action === 'check-out' ? now : existing.timeOut,
-      latitude: action === 'check-in' ? (telemetry.latitude || existing.latitude || null) : (existing.latitude || null),
-      longitude: action === 'check-in' ? (telemetry.longitude || existing.longitude || null) : (existing.longitude || null),
-      accuracy: action === 'check-in' ? (telemetry.accuracy || existing.accuracy || null) : (existing.accuracy || null)
-    };
-  } else {
-    state.db.attendance.push({
-      id: crypto.randomUUID(),
-      employeeId: employee.id,
-      date: today,
-      status: 'Present',
-      permission: false,
-      timeIn: action === 'check-in' ? now : '',
-      timeOut: action === 'check-out' ? now : '',
-      latitude: telemetry.latitude || null,
-      longitude: telemetry.longitude || null,
-      accuracy: telemetry.accuracy || null
-    });
-  }
-
-  saveDatabase();
-  showToast(action === 'check-in' ? 'Check-in recorded.' : 'Check-out recorded.', 'success');
-  refreshAll();
-}
-
-function resetPayrollAdjustmentForm() {
-  dom.payrollAdjustmentForm.reset();
-  dom.payrollAdjustmentId.value = '';
-  dom.payrollAdjustmentDate.value = todayISO(0);
-  dom.payrollAdjustmentType.value = 'Loan';
-  dom.payrollAdjustmentFormTitle.textContent = 'Payroll Adjustments';
-  dom.payrollAdjustmentSubmitBtn.textContent = 'Save Adjustment';
-}
-
-function submitBudget(event) {
-  event.preventDefault();
-  state.db.budget.salary = Number(dom.salaryBudget.value);
-  state.db.budget.operations = Number(dom.operationsBudget.value);
-  saveDatabase();
-  showToast('Budget updated.', 'success');
-  refreshAll();
-}
-
-function toggleAttendanceLock() {
-  setAttendanceLockState(!getAttendanceLockState());
-  saveDatabase();
-  showToast(getAttendanceLockState() ? 'Attendance locked.' : 'Attendance unlocked.', 'success');
-  refreshAll();
+  renderStaffPortal(getEmployeeDeductions, getStaffDeductionRows);
+  
+  const currentEmp = (state.db?.employees || []).find(e => 
+    (state.session?.employeeId && e.id === state.session.employeeId) || 
+    (state.session?.email && (e.email || '').toLowerCase() === String(state.session?.email || '').toLowerCase())
+  );
+  const currentAvatar = currentEmp?.avatar || state.session?.avatar || null;
+  const currentName = state.session?.name || currentEmp?.fullName || 'User';
+  renderUserAvatars(currentAvatar, currentName);
+  
+  requestAnimationFrame(init3DTilt);
 }
 
 function handleTableActions(event) {
@@ -2055,34 +85,37 @@ function handleTableActions(event) {
   const { action, id } = button.dataset;
 
   if (action === 'edit-employee') {
-    const employee = state.db.employees.find((item) => item.id === id);
+    const employee = (state.db?.employees || []).find((item) => item.id === id);
     if (!employee) return;
-    dom.employeeId.value = employee.id;
-    dom.employeeName.value = employee.fullName;
-    dom.employeeEmail.value = employee.email || '';
-    dom.employeePosition.value = employee.position;
-    dom.employeeDepartment.value = employee.department;
-    if (dom.employeeOffice) dom.employeeOffice.value = employee.officeId || 'off-hq';
-    dom.employeeSalary.value = employee.salary;
-    dom.employeeFormTitle.textContent = `Edit ${employee.id}`;
-    dom.employeeSubmitBtn.textContent = 'Update Employee';
+    const user = (state.db?.users || []).find((u) => u.employeeId === employee.id || u.email === employee.email);
+    if (dom.employeeId) dom.employeeId.value = employee.id;
+    if (dom.employeeName) dom.employeeName.value = employee.fullName;
+    if (dom.employeeEmail) dom.employeeEmail.value = employee.email || '';
+    if (dom.employeeRole) dom.employeeRole.value = employee.role || user?.role || 'staff';
+    if (dom.employeeAvatarData) dom.employeeAvatarData.value = employee.avatar || '';
+    if (dom.employeeFormAvatarPreview) updateAvatarElement(dom.employeeFormAvatarPreview, employee.fullName, employee.avatar);
+    if (dom.employeeSalary) dom.employeeSalary.value = employee.salary;
+    if (dom.employeeFormTitle) dom.employeeFormTitle.textContent = `Edit ${employee.id}`;
+    if (dom.employeeSubmitBtn) dom.employeeSubmitBtn.textContent = 'Update Employee';
     setActiveView('employeesView');
   }
 
   if (action === 'show-employee-credentials') {
-    const employee = state.db.employees.find((item) => item.id === id);
+    const employee = (state.db?.employees || []).find((item) => item.id === id);
     if (!employee) return;
-    const linkedUser = state.db.users.find((item) => item.employeeId === employee.id);
+    const linkedUser = (state.db?.users || []).find((item) => item.employeeId === employee.id);
     if (!linkedUser) return;
-    dom.employeeCredentialBox.classList.remove('d-none');
-    dom.employeeCredentialBox.innerHTML = `Username: <strong>${linkedUser.username || '—'}</strong> | Password: <strong>${employee.id}</strong>`;
+    if (dom.employeeCredentialBox) {
+      dom.employeeCredentialBox.classList.remove('d-none');
+      dom.employeeCredentialBox.innerHTML = `Username: <strong>${linkedUser.username || '—'}</strong> | Password: <strong>${employee.id}</strong>`;
+    }
     return;
   }
 
   if (action === 'toggle-employee-active') {
-    const employee = state.db.employees.find((item) => item.id === id);
+    const employee = (state.db?.employees || []).find((item) => item.id === id);
     if (!employee) return;
-    const nextActive = !isEmployeeActive(employee);
+    const nextActive = employee.active === false;
     if (!confirm(nextActive ? 'Reactivate this employee account?' : 'Deactivate this employee account?')) return;
 
     state.db.employees = state.db.employees.map((item) => (item.id === id ? { ...item, active: nextActive } : item));
@@ -2094,152 +127,83 @@ function handleTableActions(event) {
   }
 
   if (action === 'delete-employee') {
-    if (!confirm('Delete this employee and related records?')) return;
-    state.db.employees = state.db.employees.filter((item) => item.id !== id);
-    state.db.users = state.db.users.filter((item) => item.employeeId !== id);
-    state.db.attendance = state.db.attendance.filter((item) => item.employeeId !== id);
-    state.db.tasks = state.db.tasks.filter((item) => item.employeeId !== id);
-    state.db.reports = state.db.reports.filter((item) => item.employeeId !== id);
-    state.db.payrollAdjustments = state.db.payrollAdjustments.filter((item) => item.employeeId !== id);
-    state.db.payrollPayments = state.db.payrollPayments.filter((item) => item.employeeId !== id);
+    if (!confirm('Are you sure you want to delete this employee?')) return;
+    state.db.employees = (state.db?.employees || []).filter((item) => item.id !== id);
+    state.db.users = (state.db?.users || []).filter((item) => item.employeeId !== id);
     saveDatabase();
     showToast('Employee deleted.', 'success');
     refreshAll();
   }
 
   if (action === 'edit-attendance') {
-    const entry = state.db.attendance.find((item) => item.id === id);
+    const entry = (state.db?.attendance || []).find((item) => item.id === id);
     if (!entry) return;
-    dom.attendanceId.value = entry.id;
-    dom.attendanceEmployee.value = entry.employeeId;
-    dom.attendanceDate.value = entry.date;
-    dom.attendanceStatus.value = entry.status;
-    dom.attendancePermission.value = entry.permission ? 'Yes' : 'No';
-    dom.attendanceTimeIn.value = entry.timeIn || '';
-    dom.attendanceTimeOut.value = entry.timeOut || '';
-    dom.attendanceFormTitle.textContent = 'Edit Attendance';
+    if (dom.attendanceId) dom.attendanceId.value = entry.id;
+    if (dom.attendanceEmployee) dom.attendanceEmployee.value = entry.employeeId;
+    if (dom.attendanceDate) dom.attendanceDate.value = entry.date;
+    if (dom.attendanceStatus) dom.attendanceStatus.value = entry.status;
+    if (dom.attendancePermission) dom.attendancePermission.value = entry.permission ? 'Yes' : 'No';
+    if (dom.attendanceTimeIn) dom.attendanceTimeIn.value = entry.timeIn || '';
+    if (dom.attendanceTimeOut) dom.attendanceTimeOut.value = entry.timeOut || '';
+    if (dom.attendanceFormTitle) dom.attendanceFormTitle.textContent = 'Edit Attendance';
     if (dom.attendanceSubmitBtn) dom.attendanceSubmitBtn.textContent = 'Update Attendance';
     setActiveView('attendanceView');
-    dom.attendanceForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    return;
-  }
-
-  if (action === 'edit-task') {
-    const task = state.db.tasks.find((item) => item.id === id);
-    if (!task) return;
-    dom.taskId.value = task.id;
-    dom.taskEmployee.value = task.employeeId;
-    dom.taskTitle.value = task.title;
-    dom.taskDescription.value = task.description;
-    dom.taskDeadline.value = task.deadline;
-    dom.taskProgress.value = task.completion;
-    if (dom.taskPermission) dom.taskPermission.value = task.permission ? 'Yes' : 'No';
-    dom.taskFormTitle.textContent = 'Edit Task';
-    setActiveView('tasksView');
-  }
-
-  if (action === 'delete-task') {
-    state.db.tasks = state.db.tasks.filter((item) => item.id !== id);
-    saveDatabase();
-    showToast('Task removed.', 'success');
-    refreshAll();
   }
 
   if (action === 'delete-attendance') {
-    state.db.attendance = state.db.attendance.filter((item) => item.id !== id);
+    state.db.attendance = (state.db?.attendance || []).filter((item) => item.id !== id);
     saveDatabase();
     showToast('Attendance entry removed.', 'success');
     refreshAll();
   }
 
-  if (action === 'delete-report') {
-    state.db.reports = state.db.reports.filter((item) => item.id !== id);
+  if (action === 'edit-task') {
+    const task = (state.db?.tasks || []).find((item) => item.id === id);
+    if (!task) return;
+    if (dom.taskId) dom.taskId.value = task.id;
+    if (dom.taskEmployee) dom.taskEmployee.value = task.employeeId;
+    if (dom.taskTitle) dom.taskTitle.value = task.title;
+    if (dom.taskDescription) dom.taskDescription.value = task.description;
+    if (dom.taskDeadline) dom.taskDeadline.value = task.deadline;
+    if (dom.taskProgress) dom.taskProgress.value = task.completion;
+    if (dom.taskPermission) dom.taskPermission.value = task.permission ? 'Yes' : 'No';
+    if (dom.taskFormTitle) dom.taskFormTitle.textContent = 'Edit Task';
+    setActiveView('tasksView');
+  }
+
+  if (action === 'delete-task') {
+    if (!confirm('Are you sure you want to delete this task?')) return;
+    state.db.tasks = (state.db?.tasks || []).filter((item) => item.id !== id);
     saveDatabase();
-    showToast('Report removed.', 'success');
-    refreshAll();
-  }
-
-  if (action === 'edit-report') {
-    const report = state.db.reports.find((item) => item.id === id);
-    if (!report || !dom.reportForm || !dom.reportId) return;
-    dom.reportId.value = report.id;
-    dom.reportEmployee.value = report.employeeId;
-    dom.reportTitle.value = report.title;
-    dom.reportContent.value = report.content;
-    if (dom.reportPermission) dom.reportPermission.value = report.permission ? 'Yes' : 'No';
-    if (dom.reportFormTitle) dom.reportFormTitle.textContent = 'Edit Weekly Report';
-    if (dom.reportSubmitBtn) dom.reportSubmitBtn.textContent = 'Update Report';
-    setActiveView('reportsView');
-  }
-
-  if (action === 'toggle-missing-report-permission') {
-    const penalty = state.db.missingReportPenalties.find((item) => item.id === id);
-    if (!penalty) return;
-    penalty.permission = !penalty.permission;
-    saveDatabase();
-    showToast(penalty.permission ? 'Missing report penalty waived.' : 'Missing report penalty reinstated.', 'success');
-    refreshAll();
-  }
-
-  if (action === 'delete-missing-report-penalty') {
-    if (!confirm('Remove this missing report penalty record?')) return;
-    state.db.missingReportPenalties = state.db.missingReportPenalties.filter((item) => item.id !== id);
-    saveDatabase();
-    showToast('Penalty record removed.', 'success');
-    refreshAll();
-  }
-
-  if (action === 'edit-office') {
-    const office = state.db.offices.find((o) => o.id === id);
-    if (!office) return;
-    dom.officeId.value = office.id;
-    dom.officeName.value = office.name;
-    dom.officeLatitude.value = office.latitude;
-    dom.officeLongitude.value = office.longitude;
-    dom.officeRadius.value = office.radius;
-    dom.officeFormTitle.textContent = 'Edit Office';
-    if (dom.officeSubmitBtn) dom.officeSubmitBtn.textContent = 'Update Office';
-    setActiveView('officesView');
-  }
-
-  if (action === 'delete-office') {
-    const assigned = state.db.employees.filter((emp) => emp.officeId === id);
-    if (assigned.length > 0) {
-      alert(`Cannot delete office. There are ${assigned.length} employee(s) assigned to this office. Please reassign them first.`);
-      return;
-    }
-    if (!confirm('Are you sure you want to delete this office?')) return;
-    state.db.offices = state.db.offices.filter((o) => o.id !== id);
-    saveDatabase();
-    showToast('Office configuration deleted.', 'success');
+    showToast('Task deleted.', 'success');
     refreshAll();
   }
 
   if (action === 'delete-income') {
     if (!confirm('Delete this finance entry?')) return;
-    state.db.income = state.db.income.filter((item) => item.id !== id);
+    state.db.income = (state.db?.income || []).filter((item) => item.id !== id);
     saveDatabase();
     showToast('Finance entry removed.', 'success');
     refreshAll();
   }
 
   if (action === 'edit-payroll-adjustment') {
-    const adjustment = state.db.payrollAdjustments.find((item) => item.id === id);
+    const adjustment = (state.db?.payrollAdjustments || []).find((item) => item.id === id);
     if (!adjustment) return;
-    dom.payrollAdjustmentId.value = adjustment.id;
-    dom.payrollAdjustmentEmployee.value = adjustment.employeeId;
-    dom.payrollAdjustmentType.value = adjustment.type;
-    dom.payrollAdjustmentAmount.value = adjustment.amount;
-    dom.payrollAdjustmentDate.value = adjustment.date;
-    dom.payrollAdjustmentNotes.value = adjustment.notes || '';
-    dom.payrollAdjustmentFormTitle.textContent = 'Edit Payroll Adjustment';
-    dom.payrollAdjustmentSubmitBtn.textContent = 'Update Adjustment';
+    if (dom.payrollAdjustmentId) dom.payrollAdjustmentId.value = adjustment.id;
+    if (dom.payrollAdjustmentEmployee) dom.payrollAdjustmentEmployee.value = adjustment.employeeId;
+    if (dom.payrollAdjustmentType) dom.payrollAdjustmentType.value = adjustment.type;
+    if (dom.payrollAdjustmentAmount) dom.payrollAdjustmentAmount.value = adjustment.amount;
+    if (dom.payrollAdjustmentDate) dom.payrollAdjustmentDate.value = adjustment.date;
+    if (dom.payrollAdjustmentNotes) dom.payrollAdjustmentNotes.value = adjustment.notes || '';
+    if (dom.payrollAdjustmentFormTitle) dom.payrollAdjustmentFormTitle.textContent = 'Edit Payroll Adjustment';
+    if (dom.payrollAdjustmentSubmitBtn) dom.payrollAdjustmentSubmitBtn.textContent = 'Update Adjustment';
     setActiveView('payrollView');
   }
 
   if (action === 'delete-payroll-adjustment') {
     if (!confirm('Delete this payroll adjustment?')) return;
-    state.db.payrollAdjustments = state.db.payrollAdjustments.filter((item) => item.id !== id);
+    state.db.payrollAdjustments = (state.db?.payrollAdjustments || []).filter((item) => item.id !== id);
     saveDatabase();
     showToast('Payroll adjustment removed.', 'success');
     refreshAll();
@@ -2254,400 +218,423 @@ function handleTableActions(event) {
     showToast(`${getPayrollPeriodLabel(periodKey)} salary ${!paid ? 'marked paid.' : 'marked unpaid.'}`, 'success');
     refreshAll();
   }
-}
 
-function init3DTilt() {
-  const cards = document.querySelectorAll('.summary-card, .mini-metric, .countdown-tile, .auth-card, .budget-card, .compact-chart-card');
-  cards.forEach((card) => {
-    if (card.dataset.tiltBound) return;
-    card.dataset.tiltBound = 'true';
-
-    card.addEventListener('mousemove', (e) => {
-      const rect = card.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      
-      const centerX = rect.width / 2;
-      const centerY = rect.height / 2;
-      
-      const rotateX = ((centerY - y) / centerY) * 8;
-      const rotateY = ((x - centerX) / centerX) * 8;
-
-      card.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale3d(1.02, 1.02, 1.02)`;
-    });
-
-    card.addEventListener('mouseleave', () => {
-      card.style.transform = 'perspective(1000px) rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)';
-    });
-  });
-}
-
-function refreshAll() {
-  renderEmployees();
-  renderAttendance();
-  renderTasks();
-  renderReports();
-  renderMissingReportPenalties();
-  renderFinance();
-  renderPayrollAdjustments();
-  renderBudget();
-  renderDashboard();
-  renderStaffPortal();
-  renderOffices();
-  
-  requestAnimationFrame(init3DTilt);
-}
-
-async function handleLogin(event) {
-  event.preventDefault();
-  const loginValue = dom.email.value.trim().toLowerCase();
-  const passwordHash = await hashPassword(dom.password.value);
-  const user = state.db.users.find((item) => {
-    const emailMatch = String(item.email || '').toLowerCase() === loginValue;
-    const usernameMatch = String(item.username || '').toLowerCase() === loginValue;
-    return (emailMatch || usernameMatch) && item.passwordHash === passwordHash;
-  });
-  if (!user) {
-    showToast('Invalid credentials.', 'danger');
-    return;
+  if (action === 'manage-issue') {
+    openManagementIssueModal(id);
   }
 
-  if (user.role === 'staff' && user.active === false) {
-    showToast('This staff account has been deactivated.', 'danger');
-    return;
+  if (action === 'view-sup-report') {
+    openReportDetailModal('supervisor', id);
   }
 
-  saveSession({ email: user.email, role: user.role, name: user.name, employeeId: user.employeeId || null });
-  bootApp();
-  showToast(`Welcome, ${user.name}.`, 'success');
-}
-
-function logout() {
-  saveSession(null);
-  dom.appShell.classList.add('d-none');
-  dom.authShell.classList.remove('d-none');
-}
-
-function bootApp() {
-  dom.authShell.classList.add('d-none');
-  dom.appShell.classList.remove('d-none');
-  dom.sessionUserName.textContent = state.session?.name || 'Admin';
-  dom.sessionUserRole.textContent = state.session?.role || 'admin';
-  dom.attendanceDate.value = todayISO(0);
-  dom.incomeDate.value = todayISO(0);
-  dom.payrollAdjustmentDate.value = todayISO(0);
-  dom.payrollAdjustmentType.value = 'Loan';
-  dom.payrollAdjustmentId.value = '';
-  dom.payrollAdjustmentFormTitle.textContent = 'Payroll Adjustments';
-  dom.payrollAdjustmentSubmitBtn.textContent = 'Save Adjustment';
-  populatePayrollPeriodFilter();
-  resetReportForm();
-  dom.taskDeadline.value = todayISO(7);
-  configureRoleUi();
-  refreshAll();
-}
-
-function setupLiveClock() {
-  const updateClock = () => {
-    dom.liveClock.textContent = new Date().toLocaleString('en-NG', {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
-
-  updateClock();
-  setInterval(updateClock, 1000 * 30);
-  // Tick the task deadline countdowns every second.
-  setInterval(updateCountdownDisplays, 1000);
-}
-
-function renderTaskCountdowns() {
-  const el = dom.taskCountdownGrid;
-  if (!el) return;
-  const tasks = state.db.tasks
-    .filter((t) => Number(t.completion) < 100)
-    .sort((a, b) => String(a.deadline).localeCompare(String(b.deadline)));
-
-  if (tasks.length === 0) {
-    el.innerHTML = '<p class="text-muted text-center py-3">No active tasks.</p>';
-    return;
-  }
-
-  el.innerHTML = tasks.map((task) => {
-    const overdue = isTaskOverdue(task);
-    const employee = state.db.employees.find((e) => e.id === task.employeeId);
-    const pct = Math.min(100, Math.max(0, Number(task.completion) || 0));
-    return `
-      <div class="countdown-tile${overdue ? '  countdown-overdue' : ''} interactive-3d-card">
-        <div class="countdown-employee">${employee?.fullName || 'Unknown'}</div>
-        <div class="countdown-task" title="${task.title}">${task.title}</div>
-        <div class="countdown-deadline">Due: ${formatDate(task.deadline)}</div>
-        <div class="countdown-timer" data-countdown="${task.deadline}">—</div>
-        <div class="countdown-bar-wrap"><div class="countdown-bar" style="width:${pct}%"></div></div>
-        <div class="countdown-completion">${pct}% complete</div>
-      </div>`;
-  }).join('');
-
-  updateCountdownDisplays();
-}
-
-function renderStaffTaskCountdowns() {
-  const el = dom.staffTaskCountdownGrid;
-  if (!el) return;
-  const employee = getCurrentEmployee();
-  if (!employee) {
-    el.innerHTML = '<p class="text-muted text-center py-3">No active tasks.</p>';
-    return;
-  }
-  const tasks = state.db.tasks
-    .filter((t) => t.employeeId === employee.id && Number(t.completion) < 100)
-    .sort((a, b) => String(a.deadline).localeCompare(String(b.deadline)));
-  if (tasks.length === 0) {
-    el.innerHTML = '<p class="text-muted text-center py-3">No active tasks.</p>';
-    return;
-  }
-  el.innerHTML = tasks.map((task) => {
-    const overdue = isTaskOverdue(task);
-    const pct = Math.min(100, Math.max(0, Number(task.completion) || 0));
-    return `
-      <div class="countdown-tile${overdue ? '  countdown-overdue' : ''} interactive-3d-card">
-        <div class="countdown-task" title="${task.title}">${task.title}</div>
-        <div class="countdown-deadline">Due: ${formatDate(task.deadline)}</div>
-        <div class="countdown-timer" data-countdown="${task.deadline}">—</div>
-        <div class="countdown-bar-wrap"><div class="countdown-bar" style="width:${pct}%"></div></div>
-        <div class="countdown-completion">${pct}% complete</div>
-      </div>`;
-  }).join('');
-  updateCountdownDisplays();
-}
-
-function updateCountdownDisplays() {
-  document.querySelectorAll('[data-countdown]').forEach((el) => {
-    const deadline = el.dataset.countdown;
-    if (!deadline) return;
-    const [y, m, d] = deadline.split('-').map(Number);
-    const target = new Date(y, m - 1, d, 23, 59, 59, 999);
-    const diff = target - Date.now();
-
-    if (diff <= 0) {
-      el.textContent = 'OVERDUE';
-      el.className = 'countdown-timer time-overdue';
-      return;
-    }
-
-    const days = Math.floor(diff / 86400000);
-    const hours = Math.floor((diff % 86400000) / 3600000);
-    const mins = Math.floor((diff % 3600000) / 60000);
-    const secs = Math.floor((diff % 60000) / 1000);
-    const pad = (n) => String(n).padStart(2, '0');
-
-    el.textContent = days > 0
-      ? `${days}d ${pad(hours)}h ${pad(mins)}m ${pad(secs)}s`
-      : `${pad(hours)}h ${pad(mins)}m ${pad(secs)}s`;
-
-    if (diff < 86400000)           el.className = 'countdown-timer time-urgent';
-    else if (diff < 3 * 86400000) el.className = 'countdown-timer time-soon';
-    else                           el.className = 'countdown-timer time-ok';
-  });
-}
-
-function cacheDom() {
-  const ids = {
-    authShell: 'authShell', appShell: 'appShell', loginForm: 'loginForm', email: 'email', password: 'password',
-    sidebar: 'sidebarPanel', mobileMenuBtn: 'mobileMenuBtn', logoutBtn: 'logoutBtn',
-    liveClock: 'liveClock', sessionUserName: 'sessionUserName', sessionUserRole: 'sessionUserRole', pageTitle: 'pageTitle',
-    totalEmployeesCard: 'totalEmployeesCard', presentTodayCard: 'presentTodayCard', absentTodayCard: 'absentTodayCard',
-    totalDeductionsCard: 'totalDeductionsCard', netSalaryCard: 'netSalaryCard', employeeForm: 'employeeForm', employeeId: 'employeeId',
-    employeeName: 'employeeName', employeeEmail: 'employeeEmail', employeePosition: 'employeePosition', employeeDepartment: 'employeeDepartment', employeeSalary: 'employeeSalary',
-    employeeFormTitle: 'employeeFormTitle', employeeSubmitBtn: 'employeeSubmitBtn', employeeResetBtn: 'employeeResetBtn', employeeOffice: 'employeeOffice',
-    employeeSearch: 'employeeSearch', employeeTableBody: 'employeeTableBody', attendanceForm: 'attendanceForm', attendanceEmployee: 'attendanceEmployee',
-    attendanceDate: 'attendanceDate', attendanceStatus: 'attendanceStatus', attendancePermission: 'attendancePermission', attendanceTimeIn: 'attendanceTimeIn',
-    attendanceTimeOut: 'attendanceTimeOut', attendanceId: 'attendanceId', attendanceFormTitle: 'attendanceFormTitle', attendanceSubmitBtn: 'attendanceSubmitBtn', attendanceResetBtn: 'attendanceResetBtn', attendanceSearch: 'attendanceSearch', attendanceTableBody: 'attendanceTableBody', taskForm: 'taskForm',
-    taskId: 'taskId', taskEmployee: 'taskEmployee', taskTitle: 'taskTitle', taskDescription: 'taskDescription', taskDeadline: 'taskDeadline',
-    taskProgress: 'taskProgress', taskPermission: 'taskPermission', taskFormTitle: 'taskFormTitle', taskSearch: 'taskSearch', taskTableBody: 'taskTableBody', taskResetBtn: 'taskResetBtn',
-    reportForm: 'reportForm', reportPermission: 'reportPermission', reportFormTitle: 'reportFormTitle', reportSubmitBtn: 'reportSubmitBtn', reportId: 'reportId', reportEmployee: 'reportEmployee', reportTitle: 'reportTitle', reportContent: 'reportContent', reportSearch: 'reportSearch', staffReportForm: 'staffReportForm', staffReportTitle: 'staffReportTitle', staffReportContent: 'staffReportContent', staffReportSubmitBtn: 'staffReportSubmitBtn',
-    reportTableBody: 'reportTableBody', missingReportPenaltiesTableBody: 'missingReportPenaltiesTableBody', incomeForm: 'incomeForm', incomeType: 'incomeType', incomeCategory: 'incomeCategory', incomeAmount: 'incomeAmount',
-    incomeDate: 'incomeDate', incomeDescription: 'incomeDescription', incomeTableBody: 'incomeTableBody', revenueMetric: 'revenueMetric', expensesMetric: 'expensesMetric',
-    profitMetric: 'profitMetric', financeRangeFilter: 'financeRangeFilter',
-    payrollAdjustmentForm: 'payrollAdjustmentForm', payrollAdjustmentId: 'payrollAdjustmentId', payrollAdjustmentFormTitle: 'payrollAdjustmentFormTitle', payrollAdjustmentSubmitBtn: 'payrollAdjustmentSubmitBtn', payrollAdjustmentEmployee: 'payrollAdjustmentEmployee', payrollAdjustmentType: 'payrollAdjustmentType', payrollAdjustmentAmount: 'payrollAdjustmentAmount', payrollAdjustmentDate: 'payrollAdjustmentDate', payrollAdjustmentNotes: 'payrollAdjustmentNotes', payrollAdjustmentResetBtn: 'payrollAdjustmentResetBtn', payrollAdjustmentSearch: 'payrollAdjustmentSearch', payrollAdjustmentTableBody: 'payrollAdjustmentTableBody', payrollLoansMetric: 'payrollLoansMetric', payrollAdvancesMetric: 'payrollAdvancesMetric', payrollBonusesMetric: 'payrollBonusesMetric', payrollNetMetric: 'payrollNetMetric', payrollPeriodFilter: 'payrollPeriodFilter', payrollPeriodLabel: 'payrollPeriodLabel', payrollSummaryTableBody: 'payrollSummaryTableBody', budgetForm: 'budgetForm', salaryBudget: 'salaryBudget',
-    operationsBudget: 'operationsBudget', budgetSalaryValue: 'budgetSalaryValue', budgetOperationsValue: 'budgetOperationsValue', budgetSalaryActual: 'budgetSalaryActual',
-    budgetOperationsActual: 'budgetOperationsActual', budgetSalaryStatus: 'budgetSalaryStatus', budgetOperationsStatus: 'budgetOperationsStatus', budgetAlerts: 'budgetAlerts',
-    staffPortalStatus: 'staffPortalStatus', staffAttendanceSummary: 'staffAttendanceSummary', staffAttendanceDetail: 'staffAttendanceDetail', staffReportsSummary: 'staffReportsSummary', staffReportsDetail: 'staffReportsDetail', staffSalaryValue: 'staffSalaryValue', staffActualSalaryValue: 'staffActualSalaryValue', staffSalaryPeriodLabel: 'staffSalaryPeriodLabel', staffSalaryStatus: 'staffSalaryStatus', staffTasksBody: 'staffTasksBody', staffReportsBody: 'staffReportsBody', staffDeductionsBody: 'staffDeductionsBody', staffDailyAttendanceBody: 'staffDailyAttendanceBody', staffMonthlyReportsBody: 'staffMonthlyReportsBody', staffColleaguesBody: 'staffColleaguesBody', staffCheckInBtn: 'staffCheckInBtn', staffCheckOutBtn: 'staffCheckOutBtn', staffInactiveState: 'staffInactiveState', staffActiveContent: 'staffActiveContent', staffAttendanceLockStatus: 'staffAttendanceLockStatus', adminAttendanceLockStatus: 'adminAttendanceLockStatus', attendanceLockBtn: 'attendanceLockBtn', employeeCredentialBox: 'employeeCredentialBox',
-    attendanceDateFilter: 'attendanceDateFilter', reportDateFilter: 'reportDateFilter', taskStatusFilter: 'taskStatusFilter', payrollAdjDateFilter: 'payrollAdjDateFilter',
-    toastContainer: 'toastContainer',
-    taskCountdownGrid: 'taskCountdownGrid',
-    staffTaskCountdownGrid: 'staffTaskCountdownGrid',
-    officeForm: 'officeForm', officeId: 'officeId', officeName: 'officeName', officeLatitude: 'officeLatitude', officeLongitude: 'officeLongitude', officeRadius: 'officeRadius', officeSubmitBtn: 'officeSubmitBtn', officeResetBtn: 'officeResetBtn', officeTableBody: 'officeTableBody'
-  };
-
-  Object.entries(ids).forEach(([key, id]) => {
-    dom[key] = document.getElementById(id);
-  });
-}
-
-function renderOffices() {
-  const tableBody = dom.officeTableBody;
-  if (!tableBody) return;
-
-  const rows = [...(state.db.offices || [])]
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((office) => {
-      const count = state.db.employees.filter((emp) => emp.officeId === office.id).length;
-      return `
-        <tr>
-          <td><div class="fw-semibold">${office.name}</div></td>
-          <td>${office.latitude.toFixed(6)}</td>
-          <td>${office.longitude.toFixed(6)}</td>
-          <td>${office.radius}m</td>
-          <td><span class="chip chip-neutral">${count}</span></td>
-          <td>
-            <button class="btn btn-sm btn-soft me-1" data-action="edit-office" data-id="${office.id}">Edit</button>
-            <button class="btn btn-sm btn-outline-secondary" data-action="delete-office" data-id="${office.id}">Delete</button>
-          </td>
-        </tr>`;
-    }).join('');
-
-  tableBody.innerHTML = rows || '<tr><td colspan="6" class="text-center text-muted py-4">No offices configured.</td></tr>';
-
-  if (dom.employeeOffice) {
-    const selected = dom.employeeOffice.value;
-    dom.employeeOffice.innerHTML = [...(state.db.offices || [])]
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((off) => `<option value="${off.id}">${off.name}</option>`)
-      .join('');
-    if (selected && [...state.db.offices].some(o => o.id === selected)) {
-      dom.employeeOffice.value = selected;
+  if (action === 'view-dev-report') {
+    const rep = (state.db?.reportsDeveloper || []).find(r => r.id === id);
+    if (!rep) return;
+    const modalEl = document.getElementById('reportDetailModal');
+    const titleEl = document.getElementById('reportDetailModalTitle');
+    const bodyEl = document.getElementById('reportDetailModalBody');
+    if (modalEl && titleEl && bodyEl) {
+      titleEl.textContent = `Developer Operations Report`;
+      bodyEl.innerHTML = `
+        <div class="report-detail-section">
+          <h5>In-Progress Projects</h5>
+          <div class="table-responsive">
+            <table class="table table-sm table-dark">
+              <thead><tr><th>Project</th><th>Type</th><th>Client</th><th>Status</th><th>Progress</th><th>Issues</th></tr></thead>
+              <tbody>
+                ${(rep.projects || []).map(p => `
+                  <tr>
+                    <td>${p.name}</td><td>${p.type}</td><td>${p.client}</td><td>${p.status}</td><td>${p.completionPct}%</td><td>${p.issues || 'None'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="report-detail-section">
+          <h5>Work Completed & Maintenance</h5>
+          <div class="mb-2"><strong>Completed:</strong> ${rep.workCompleted}</div>
+          <div><strong>Maintenance:</strong> [${rep.maintType}] ${rep.maintTarget} - ${rep.maintDetails}</div>
+        </div>
+        <div class="report-detail-section">
+          <h5>Management Support Request</h5>
+          <div class="text-warning">${rep.supportRequired || 'No management support required this week.'}</div>
+        </div>
+      `;
+      const modal = new bootstrap.Modal(modalEl);
+      modal.show();
     }
   }
-}
 
-function upsertOffice(event) {
-  event.preventDefault();
-  const id = dom.officeId.value || crypto.randomUUID();
-  const name = dom.officeName.value.trim();
-  const latitude = Number(dom.officeLatitude.value);
-  const longitude = Number(dom.officeLongitude.value);
-  const radius = Number(dom.officeRadius.value);
-
-  const office = { id, name, latitude, longitude, radius };
-
-  const index = state.db.offices.findIndex((o) => o.id === id);
-  if (index >= 0) {
-    state.db.offices[index] = office;
-    showToast('Office updated successfully.', 'success');
-  } else {
-    state.db.offices.push(office);
-    showToast('Office created successfully.', 'success');
+  if (action === 'view-welfare-report') {
+    const rep = (state.db?.reportsWelfare || []).find(r => r.id === id);
+    if (!rep) return;
+    const modalEl = document.getElementById('reportDetailModal');
+    const titleEl = document.getElementById('reportDetailModalTitle');
+    const bodyEl = document.getElementById('reportDetailModalBody');
+    if (modalEl && titleEl && bodyEl) {
+      titleEl.textContent = `Welfare & HR Weekly Report`;
+      bodyEl.innerHTML = `
+        <div class="report-detail-section">
+          <h5>Staff Performance & Conduct Roster</h5>
+          <div class="table-responsive">
+            <table class="table table-sm table-dark">
+              <thead><tr><th>Staff Member</th><th>Performance %</th><th>Conduct Score</th><th>Remarks</th></tr></thead>
+              <tbody>
+                ${(rep.staffPerformances || []).map(p => `
+                  <tr>
+                    <td>${p.name}</td><td>${p.performancePct}%</td><td>${p.conductScore}</td><td>${p.conductRemarks || '—'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="report-detail-section">
+          <h5>General Welfare Notes</h5>
+          <div>${rep.generalNotes || 'None'}</div>
+        </div>
+      `;
+      const modal = new bootstrap.Modal(modalEl);
+      modal.show();
+    }
   }
 
-  saveDatabase();
-  resetOfficeForm();
-  refreshAll();
-}
+  if (action === 'toggle-qa-status') {
+    toggleQAStatus(id, refreshAll);
+  }
 
-function resetOfficeForm() {
-  if (dom.officeForm) dom.officeForm.reset();
-  if (dom.officeId) dom.officeId.value = '';
-  if (dom.officeFormTitle) dom.officeFormTitle.textContent = 'Create Office';
-  if (dom.officeSubmitBtn) dom.officeSubmitBtn.textContent = 'Save Office';
+  if (action === 'delete-qa') {
+    if (!confirm('Are you sure you want to delete this appraisal/query record?')) return;
+    state.db.staffAppraisalsQueries = (state.db?.staffAppraisalsQueries || []).filter(q => q.id !== id);
+    saveDatabase();
+    showToast('Record deleted.', 'success');
+    refreshAll();
+  }
+
+  if (action === 'delete-management-issue') {
+    if (!confirm('Delete this management issue record?')) return;
+    state.db.managementIssues = (state.db?.managementIssues || []).filter(i => i.id !== id);
+    saveDatabase();
+    showToast('Management issue deleted.', 'success');
+    refreshAll();
+  }
+
+  if (action === 'delete-sup-report') {
+    if (!confirm('Delete this supervisor academic report?')) return;
+    state.db.reportsSupervisor = (state.db?.reportsSupervisor || []).filter(r => r.id !== id);
+    saveDatabase();
+    showToast('Supervisor report deleted.', 'success');
+    refreshAll();
+  }
+
+  if (action === 'delete-dev-report') {
+    if (!confirm('Delete this developer operations report?')) return;
+    state.db.reportsDeveloper = (state.db?.reportsDeveloper || []).filter(r => r.id !== id);
+    saveDatabase();
+    showToast('Developer report deleted.', 'success');
+    refreshAll();
+  }
+
+  if (action === 'delete-welfare-report') {
+    if (!confirm('Delete this welfare weekly report?')) return;
+    state.db.reportsWelfare = (state.db?.reportsWelfare || []).filter(r => r.id !== id);
+    saveDatabase();
+    showToast('Welfare report deleted.', 'success');
+    refreshAll();
+  }
+
+  if (action === 'edit-school') {
+    const sch = (state.db?.schools || []).find(s => s.id === id);
+    if (!sch) return;
+    if (dom.schoolId) dom.schoolId.value = sch.id;
+    if (dom.schoolName) dom.schoolName.value = sch.name;
+    if (dom.schoolCode) dom.schoolCode.value = sch.code || '';
+    if (dom.schoolLocation) dom.schoolLocation.value = sch.location || '';
+    if (dom.schoolContactPerson) dom.schoolContactPerson.value = sch.contactPerson || '';
+    if (dom.schoolContactPhone) dom.schoolContactPhone.value = sch.contactPhone || '';
+    if (dom.schoolSupervisor) dom.schoolSupervisor.value = sch.supervisorId || '';
+    if (dom.schoolFormTitle) dom.schoolFormTitle.textContent = 'Edit School';
+    if (dom.schoolSubmitBtn) dom.schoolSubmitBtn.textContent = 'Update School';
+    setActiveView('schoolsView');
+  }
+
+  if (action === 'report-school') {
+    const sch = (state.db?.schools || []).find(s => s.id === id);
+    if (!sch) return;
+    setActiveView('supervisorsView');
+    if (dom.supReportSchool) {
+      dom.supReportSchool.value = sch.id;
+      restoreSupervisorDraft(sch.id);
+    }
+    showToast(`Ready to report for ${sch.name}.`, 'info');
+  }
+
+  if (action === 'delete-school') {
+    deleteSchool(id, refreshAll);
+  }
 }
 
 function bindEvents() {
-  dom.loginForm.addEventListener('submit', handleLogin);
-  dom.logoutBtn.addEventListener('click', logout);
-  dom.mobileMenuBtn.addEventListener('click', () => dom.sidebar.classList.toggle('open'));
-  dom.employeeForm.addEventListener('submit', upsertEmployee);
-  dom.employeeResetBtn.addEventListener('click', resetEmployeeForm);
-  dom.attendanceForm.addEventListener('submit', upsertAttendance);
-  dom.taskForm.addEventListener('submit', upsertTask);
-  dom.taskResetBtn.addEventListener('click', resetTaskForm);
+  if (dom.loginForm) dom.loginForm.addEventListener('submit', (e) => handleLogin(e, () => { configureRoleUi(setActiveView); bootApp(); }));
+  if (dom.logoutBtn) dom.logoutBtn.addEventListener('click', logout);
+  
+  const backdrop = document.getElementById('sidebarBackdrop');
+  if (dom.mobileMenuBtn) {
+    dom.mobileMenuBtn.addEventListener('click', () => {
+      const isOpen = dom.sidebar?.classList.toggle('open');
+      if (backdrop) backdrop.classList.toggle('show', isOpen);
+    });
+  }
+  if (backdrop) {
+    backdrop.addEventListener('click', () => {
+      dom.sidebar?.classList.remove('open');
+      backdrop.classList.remove('show');
+    });
+  }
+  if (dom.employeeForm) dom.employeeForm.addEventListener('submit', (e) => upsertEmployee(e, refreshAll));
+  if (dom.employeeResetBtn) dom.employeeResetBtn.addEventListener('click', resetEmployeeForm);
+  if (dom.attendanceForm) dom.attendanceForm.addEventListener('submit', (e) => upsertAttendance(e, refreshAll));
+  if (dom.taskForm) dom.taskForm.addEventListener('submit', (e) => upsertTask(e, refreshAll));
+  if (dom.taskResetBtn) dom.taskResetBtn.addEventListener('click', resetTaskForm);
   if (dom.attendanceResetBtn) dom.attendanceResetBtn.addEventListener('click', resetAttendanceForm);
-  dom.reportForm.addEventListener('submit', submitReport);
-  if (dom.staffReportForm) dom.staffReportForm.addEventListener('submit', submitReport);
-  dom.incomeForm.addEventListener('submit', submitIncome);
-  dom.payrollAdjustmentForm.addEventListener('submit', submitPayrollAdjustment);
-  dom.payrollAdjustmentResetBtn.addEventListener('click', resetPayrollAdjustmentForm);
-  dom.budgetForm.addEventListener('submit', submitBudget);
-  if (dom.officeForm) dom.officeForm.addEventListener('submit', upsertOffice);
-  if (dom.officeResetBtn) dom.officeResetBtn.addEventListener('click', resetOfficeForm);
-  dom.financeRangeFilter.addEventListener('change', renderFinance);
-  dom.payrollAdjustmentSearch.addEventListener('input', renderPayrollAdjustments);
+  if (dom.incomeForm) dom.incomeForm.addEventListener('submit', (e) => submitIncome(e, refreshAll));
+  if (dom.payrollAdjustmentForm) dom.payrollAdjustmentForm.addEventListener('submit', (e) => submitPayrollAdjustment(e, refreshAll));
+  if (dom.payrollAdjustmentResetBtn) dom.payrollAdjustmentResetBtn.addEventListener('click', resetPayrollAdjustmentForm);
+  if (dom.budgetForm) dom.budgetForm.addEventListener('submit', (e) => submitBudget(e, refreshAll));
+  if (dom.financeRangeFilter) dom.financeRangeFilter.addEventListener('change', renderFinance);
+  
+  // Debounced search filters
+  if (dom.payrollAdjustmentSearch) dom.payrollAdjustmentSearch.addEventListener('input', debounce(renderPayrollAdjustments, 150));
   if (dom.payrollPeriodFilter) dom.payrollPeriodFilter.addEventListener('change', renderPayrollAdjustments);
-  dom.employeeSearch.addEventListener('input', renderEmployees);
-  dom.attendanceSearch.addEventListener('input', renderAttendance);
-  dom.taskSearch.addEventListener('input', renderTasks);
-  dom.reportSearch.addEventListener('input', renderReports);
+  if (dom.employeeSearch) dom.employeeSearch.addEventListener('input', debounce(() => renderEmployees(getEmployeeDeductions), 150));
+  if (dom.attendanceSearch) dom.attendanceSearch.addEventListener('input', debounce(renderAttendance, 150));
+  if (dom.taskSearch) dom.taskSearch.addEventListener('input', debounce(renderTasks, 150));
   if (dom.attendanceDateFilter) dom.attendanceDateFilter.addEventListener('change', renderAttendance);
-  if (dom.reportDateFilter) dom.reportDateFilter.addEventListener('change', renderReports);
   if (dom.taskStatusFilter) dom.taskStatusFilter.addEventListener('change', renderTasks);
   if (dom.payrollAdjDateFilter) dom.payrollAdjDateFilter.addEventListener('change', renderPayrollAdjustments);
-  if (dom.staffCheckInBtn) dom.staffCheckInBtn.addEventListener('click', () => submitStaffAttendance('check-in'));
-  if (dom.staffCheckOutBtn) dom.staffCheckOutBtn.addEventListener('click', () => submitStaffAttendance('check-out'));
-  if (dom.attendanceLockBtn) dom.attendanceLockBtn.addEventListener('click', toggleAttendanceLock);
-  document.getElementById('sidebarNav').addEventListener('click', (event) => {
-    const button = event.target.closest('[data-view]');
-    if (!button) return;
-    setActiveView(button.dataset.view);
-  });
+  if (dom.staffCheckInBtn) dom.staffCheckInBtn.addEventListener('click', () => submitStaffAttendance('check-in', refreshAll));
+  if (dom.staffCheckOutBtn) dom.staffCheckOutBtn.addEventListener('click', () => submitStaffAttendance('check-out', refreshAll));
+  if (dom.attendanceFormSignInBtn) dom.attendanceFormSignInBtn.addEventListener('click', () => handleAttendanceFormQuickSign('check-in', refreshAll));
+  if (dom.attendanceFormSignOutBtn) dom.attendanceFormSignOutBtn.addEventListener('click', () => handleAttendanceFormQuickSign('check-out', refreshAll));
+  if (dom.attendanceLockBtn) dom.attendanceLockBtn.addEventListener('click', () => toggleAttendanceLock(refreshAll));
+
+  // Departmental Event Listeners
+  if (dom.modalSaveIssueBtn) dom.modalSaveIssueBtn.addEventListener('click', () => saveManagementIssue(refreshAll));
+  if (dom.issueStatusFilter) dom.issueStatusFilter.addEventListener('change', renderManagementIssues);
+  if (dom.issueDeptFilter) dom.issueDeptFilter.addEventListener('change', renderManagementIssues);
+
+  if (dom.supervisorReportForm) {
+    dom.supervisorReportForm.addEventListener('submit', (e) => {
+      submitSupervisorReport(e, refreshAll);
+      const schId = dom.supReportSchool?.value;
+      if (schId) localStorage.removeItem(getSupDraftKey(schId));
+    });
+    dom.supervisorReportForm.addEventListener('input', debounce(saveSupervisorDraft, 300));
+  }
+  if (dom.supResetBtn) dom.supResetBtn.addEventListener('click', resetSupervisorReportForm);
+  if (dom.supReportSchool) {
+    dom.supReportSchool.addEventListener('change', (e) => {
+      restoreSupervisorDraft(e.target.value);
+    });
+  }
+  if (dom.supSchoolFilter) dom.supSchoolFilter.addEventListener('change', renderSupervisorsView);
+  if (dom.supReportSearch) dom.supReportSearch.addEventListener('input', debounce(renderSupervisorsView, 150));
+
+  if (dom.devReportForm) dom.devReportForm.addEventListener('submit', (e) => submitDeveloperReport(e, refreshAll));
+  if (dom.devResetBtn) dom.devResetBtn.addEventListener('click', resetDeveloperReportForm);
+  if (dom.devAddProjectBtn) dom.devAddProjectBtn.addEventListener('click', () => addDevProjectRow());
+  if (dom.devReportSearch) dom.devReportSearch.addEventListener('input', debounce(renderDevelopersView, 150));
+
+  if (dom.welfareReportForm) dom.welfareReportForm.addEventListener('submit', (e) => submitWelfareReport(e, refreshAll));
+  if (dom.welfareResetBtn) dom.welfareResetBtn.addEventListener('click', resetWelfareReportForm);
+  if (dom.qaFilter) dom.qaFilter.addEventListener('change', renderWelfareHrView);
+
+  if (dom.schoolForm) dom.schoolForm.addEventListener('submit', (e) => upsertSchool(e, refreshAll));
+  if (dom.schoolResetBtn) dom.schoolResetBtn.addEventListener('click', resetSchoolForm);
+  if (dom.schoolSearch) dom.schoolSearch.addEventListener('input', debounce(renderSchoolsView, 150));
+
+  // Profile Picture Upload Listeners
+  if (dom.employeeAvatarFile) {
+    dom.employeeAvatarFile.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      if (file.size > 2 * 1024 * 1024) {
+        showToast('Image file too large. Please select a photo under 2MB.', 'warning');
+        return;
+      }
+      try {
+        const compressed = await compressImage(file);
+        if (dom.employeeAvatarData) dom.employeeAvatarData.value = compressed;
+        if (dom.employeeFormAvatarPreview) {
+          updateAvatarElement(dom.employeeFormAvatarPreview, dom.employeeName?.value || 'Emp', compressed);
+        }
+        showToast('Profile photo compressed & attached.', 'info');
+      } catch (err) {
+        console.error(err);
+        showToast('Failed to process selected image.', 'danger');
+      }
+    });
+  }
+
+  if (dom.staffAvatarInput) {
+    dom.staffAvatarInput.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const employee = (state.db?.employees || []).find(emp => emp.id === state.session?.employeeId || emp.email === state.session?.email);
+      if (!employee) {
+        showToast('No active staff profile found.', 'danger');
+        return;
+      }
+      try {
+        const compressed = await compressImage(file);
+        employee.avatar = compressed;
+        const user = (state.db?.users || []).find(u => u.employeeId === employee.id || u.email === employee.email);
+        if (user) user.avatar = compressed;
+        if (state.session) state.session.avatar = compressed;
+        saveSession(state.session);
+        saveDatabase();
+        if (dom.staffPortalAvatar) updateAvatarElement(dom.staffPortalAvatar, employee.fullName, compressed);
+        renderUserAvatars();
+        showToast('Profile photo updated successfully.', 'success');
+      } catch (err) {
+        console.error(err);
+        showToast('Failed to update profile photo.', 'danger');
+      }
+    });
+  }
+
+  // Batch Payroll Action Listener
+  if (dom.batchPayrollPaidBtn) {
+    dom.batchPayrollPaidBtn.addEventListener('click', () => batchMarkAllPayrollPaid(refreshAll));
+  }
+
+  // Printable Pay Slip Listener
+  if (dom.staffPrintPaySlipBtn) {
+    dom.staffPrintPaySlipBtn.addEventListener('click', openStaffPaySlipModal);
+  }
+
+  // Data Export Action Listeners
+  if (dom.exportFullJsonBtn) dom.exportFullJsonBtn.addEventListener('click', exportFullSystemJson);
+  if (dom.exportPayrollCsvBtn) dom.exportPayrollCsvBtn.addEventListener('click', () => exportPayrollCsv(getEmployeeDeductions, getPayrollPayment));
+  if (dom.exportAttendanceCsvBtn) dom.exportAttendanceCsvBtn.addEventListener('click', () => exportAttendanceCsv(isLate, getAttendancePenalty));
+  if (dom.exportSupervisorsCsvBtn) dom.exportSupervisorsCsvBtn.addEventListener('click', exportSupervisorsCsv);
+
+  // Role Switcher Click Handling
+  const roleSwitcher = document.getElementById('demoRoleSwitcher');
+  if (roleSwitcher) {
+    roleSwitcher.addEventListener('click', (e) => {
+      const btn = e.target.closest('.role-badge-btn');
+      if (btn && btn.dataset.role) {
+        switchDemoRole(btn.dataset.role, refreshAll, setActiveView);
+      }
+    });
+  }
+
+  const sidebarNav = document.getElementById('sidebarNav');
+  if (sidebarNav) {
+    sidebarNav.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-view]');
+      if (!button) return;
+      setActiveView(button.dataset.view);
+    });
+  }
+
   document.body.addEventListener('click', handleTableActions);
+}
+
+function bootApp() {
+  if (dom.authShell) dom.authShell.classList.add('d-none');
+  if (dom.appShell) dom.appShell.classList.remove('d-none');
+  if (dom.attendanceDate) dom.attendanceDate.value = todayISO(0);
+  if (dom.incomeDate) dom.incomeDate.value = todayISO(0);
+  if (dom.payrollAdjustmentDate) dom.payrollAdjustmentDate.value = todayISO(0);
+  if (dom.payrollAdjustmentType) dom.payrollAdjustmentType.value = 'Deduction';
+  if (dom.payrollAdjustmentId) dom.payrollAdjustmentId.value = '';
+  if (dom.payrollAdjustmentFormTitle) dom.payrollAdjustmentFormTitle.textContent = 'Payroll Adjustments & Manager Deductions';
+  if (dom.payrollAdjustmentSubmitBtn) dom.payrollAdjustmentSubmitBtn.textContent = 'Save Adjustment';
+  populatePayrollPeriodFilter();
+  if (dom.taskDeadline) dom.taskDeadline.value = todayISO(7);
+  configureRoleUi(setActiveView);
+  refreshAll();
 }
 
 async function init() {
   cacheDom();
-  setupLiveClock();
-  state.db = await loadDatabase();
-
-  // One-time migration: remove all absent records created by the old auto-absent system.
-  if (!state.db.settings.absentRecordsCleared) {
-    state.db.attendance = state.db.attendance.filter((r) => r.status !== 'Absent');
-    state.db.settings.absentRecordsCleared = true;
-    saveDatabase();
+  try {
+    setupLiveClock(updateCountdownDisplays);
+  } catch (clockErr) {
+    console.warn('Clock initialization non-critical warning:', clockErr);
   }
-
-  // One-time migration: remove all attendance records logged on Saturdays or Sundays.
-  if (!state.db.settings.weekendRecordsCleared) {
-    state.db.attendance = state.db.attendance.filter((r) => {
-      const day = new Date(r.date).getDay();
-      return day !== 0 && day !== 6; // 0 = Sunday, 6 = Saturday
-    });
-    state.db.settings.weekendRecordsCleared = true;
-    saveDatabase();
-  }
-
-  // Auto-deduct NGN 4,000 for each employee who missed their weekly report.
-  processWeeklyMissingReportDeductions();
 
   state.session = loadSession();
-  bindEvents();
-  populatePayrollPeriodFilter();
-
   if (state.session) {
-    configureRoleUi();
-    bootApp();
-  } else {
-    dom.authShell.classList.remove('d-none');
-    dom.appShell.classList.add('d-none');
+    showAppLoading('Restoring active session...', 'Connecting to Firebase Firestore...');
   }
 
-  // Start real-time listener after initial boot so admin and staff portals
-  // reflect remote changes (sign-ins, sign-outs, etc.) without a page refresh.
-  startRealtimeListener();
+  try {
+    state.db = await loadDatabase();
+  } catch (dbErr) {
+    console.error('Failed to load database from cloud, creating local seed:', dbErr);
+    state.db = normalizeDatabase({});
+  }
 
-  dom.attendanceDate.value = todayISO(0);
-  dom.incomeDate.value = todayISO(0);
-  dom.payrollAdjustmentDate.value = todayISO(0);
-  dom.payrollAdjustmentType.value = 'Loan';
-  dom.taskDeadline.value = todayISO(7);
+  // One-time migrations
+  try {
+    if (state.db && !state.db.settings?.absentRecordsCleared) {
+      state.db.attendance = (state.db?.attendance || []).filter((r) => r.status !== 'Absent');
+      if (!state.db.settings) state.db.settings = {};
+      state.db.settings.absentRecordsCleared = true;
+      saveDatabase();
+    }
 
-  if (!state.session) {
-    dom.authShell.classList.remove('d-none');
+    if (state.db && !state.db.settings?.weekendRecordsCleared) {
+      state.db.attendance = (state.db?.attendance || []).filter((r) => {
+        const day = new Date(r.date).getDay();
+        return day !== 0 && day !== 6;
+      });
+      if (!state.db.settings) state.db.settings = {};
+      state.db.settings.weekendRecordsCleared = true;
+      saveDatabase();
+    }
+  } catch (migErr) {
+    console.warn('Migration non-critical warning:', migErr);
+  }
+
+  try {
+    bindEvents();
+    populatePayrollPeriodFilter();
+  } catch (evtErr) {
+    console.warn('Event binding warning:', evtErr);
+  }
+
+  if (state.session) {
+    try {
+      updateAppLoading('Loading workspace...', 85, 'Rendering role interface...');
+      configureRoleUi(setActiveView);
+      bootApp();
+    } catch (bootErr) {
+      console.error('Boot app error:', bootErr);
+    }
+    hideAppLoading(300);
+  } else {
+    if (dom.authShell) dom.authShell.classList.remove('d-none');
+    if (dom.appShell) dom.appShell.classList.add('d-none');
+    hideAppLoading(0);
+  }
+
+  try {
+    startRealtimeListener(() => {
+      refreshAll();
+    });
+  } catch (rtErr) {
+    console.warn('Realtime listener non-critical warning:', rtErr);
   }
 }
 
 init().catch((error) => {
-  console.error(error);
-  alert('The application could not initialize. Check the browser console for details.');
+  console.error('Initialization error:', error);
+  hideAppLoading(0);
+  if (dom.authShell) dom.authShell.classList.remove('d-none');
+  if (dom.appShell) dom.appShell.classList.add('d-none');
 });

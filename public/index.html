@@ -19,6 +19,37 @@
     <div class="glow-sphere glow-sphere-2"></div>
     <div class="glow-sphere glow-sphere-3"></div>
   </div>
+  <!-- Modern Animated Loading Screen Overlay -->
+  <div class="app-loading-screen d-none" id="appLoadingOverlay">
+    <div class="loading-backdrop"></div>
+    <div class="loading-card interactive-3d-card">
+      <div class="loading-brand-wrap">
+        <div class="loading-logo-ring">
+          <img src="logo.jpg" alt="HLTS Logo" class="loading-logo">
+          <div class="loading-spinner-ring"></div>
+        </div>
+        <div class="loading-brand-info">
+          <h4 class="loading-brand-title mb-0">HLTS Operations Hub</h4>
+          <span class="badge text-bg-primary bg-opacity-75">Firebase Real-Time Cloud</span>
+        </div>
+      </div>
+      
+      <div class="loading-progress-container mt-4">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <span class="loading-status-text" id="loadingStatusText">Connecting to Firebase...</span>
+          <span class="loading-pct-text fw-bold text-primary" id="loadingPctText">0%</span>
+        </div>
+        <div class="loading-progress-track">
+          <div class="loading-progress-bar" id="loadingProgressFill" style="width: 0%;"></div>
+        </div>
+      </div>
+
+      <div class="loading-subtext mt-3" id="loadingSubtext">
+        <i class="bi bi-cloud-arrow-down me-1"></i> Synchronizing database & security permissions...
+      </div>
+    </div>
+  </div>
+
   <div class="app-shell" id="authShell">
     <div class="auth-backdrop"></div>
     <div class="auth-card">
@@ -31,14 +62,14 @@
       </div>
       <h1 class="auth-title">Sign in to the admin console</h1>
       <p class="auth-copy">Manage employees, attendance, deductions, tasks, reports, finance, and budgets from one dashboard.</p>
-      <form id="loginForm" class="auth-form">
+      <form id="loginForm" class="auth-form" action="javascript:void(0);" autocomplete="off">
         <div class="mb-3">
           <label class="form-label" for="email">Username or Email</label>
-          <input class="form-control form-control-lg" id="email" name="email" type="text" placeholder="username" required>
+          <input class="form-control form-control-lg" id="email" name="email" type="text" placeholder="username" required autocomplete="username">
         </div>
         <div class="mb-3">
           <label class="form-label" for="password">Password</label>
-          <input class="form-control form-control-lg" id="password" name="password" type="password" placeholder="password" required>
+          <input class="form-control form-control-lg" id="password" name="password" type="password" placeholder="password" required autocomplete="current-password">
         </div>
         <div class="d-flex gap-2">
           <button class="btn btn-primary btn-lg flex-fill" type="submit">Sign In</button>
@@ -49,31 +80,40 @@
   </div>
 
   <div class="app-layout d-none" id="appShell">
+    <div class="sidebar-backdrop d-lg-none" id="sidebarBackdrop"></div>
     <aside class="sidebar" id="sidebarPanel">
       <div class="sidebar-brand">
         <span class="brand-mark"><img src="logo.jpg" alt="Logo"></span>
         <div>
-          <div class="brand-name">HR Management</div>
-          <small>HLTS LTD Operations Hub</small>
+          <div class="brand-name">HR & Operations</div>
+          <small>HLTS LTD Executive Hub</small>
         </div>
       </div>
       <nav class="nav flex-column gap-2 mt-4" id="sidebarNav">
-        <button class="nav-link active" data-view="dashboardView"><i class="bi bi-speedometer2"></i><span>Dashboard</span></button>
-        <button class="nav-link d-none" data-view="staffView"><i class="bi bi-person-badge"></i><span>Staff Portal</span></button>
+        <button class="nav-link active" data-view="dashboardView"><i class="bi bi-speedometer2"></i><span>Executive Dashboard</span></button>
+        <button class="nav-link" data-view="managementIssuesView"><i class="bi bi-exclamation-octagon"></i><span>Management Issues <span class="badge rounded-pill text-bg-danger ms-1 d-none" id="sidebarIssuesBadge">0</span></span></button>
+        <button class="nav-link" data-view="supervisorsView"><i class="bi bi-mortarboard"></i><span>Academic Supervisors</span></button>
+        <button class="nav-link" data-view="developersView"><i class="bi bi-code-slash"></i><span>Developers Office</span></button>
+        <button class="nav-link" data-view="welfareHrView"><i class="bi bi-heart-pulse"></i><span>Welfare & HR</span></button>
+        <button class="nav-link" data-view="schoolsView"><i class="bi bi-buildings"></i><span>Schools & Clients</span></button>
         <button class="nav-link" data-view="employeesView"><i class="bi bi-people"></i><span>Employees</span></button>
         <button class="nav-link" data-view="attendanceView"><i class="bi bi-clock-history"></i><span>Attendance</span></button>
         <button class="nav-link" data-view="tasksView"><i class="bi bi-list-check"></i><span>Tasks</span></button>
-        <button class="nav-link" data-view="reportsView"><i class="bi bi-journal-text"></i><span>Reports</span></button>
         <button class="nav-link" data-view="financeView"><i class="bi bi-cash-coin"></i><span>Finance</span></button>
         <button class="nav-link" data-view="payrollView"><i class="bi bi-receipt-cutoff"></i><span>Payroll</span></button>
         <button class="nav-link" data-view="budgetView"><i class="bi bi-pie-chart"></i><span>Budget</span></button>
-        <button class="nav-link" data-view="officesView"><i class="bi bi-geo-alt"></i><span>Offices</span></button>
+        <button class="nav-link d-none" data-view="staffView"><i class="bi bi-person-badge"></i><span>Staff Portal</span></button>
       </nav>
       <div class="sidebar-footer">
-        <div class="small text-uppercase text-white-50">Session</div>
-        <div id="sessionUserName" class="fw-semibold"></div>
-        <div id="sessionUserRole" class="text-white-50 small"></div>
-        <button class="btn btn-outline-light btn-sm mt-3 w-100" id="logoutBtn">Logout</button>
+        <div class="d-flex align-items-center gap-3 mb-2">
+          <div class="avatar-circle avatar-md" id="sidebarAvatarDisplay">AD</div>
+          <div class="flex-grow-1 min-w-0">
+            <div class="small text-uppercase text-white-50">Active Session</div>
+            <div id="sessionUserName" class="fw-semibold text-truncate"></div>
+            <div id="sessionUserRole" class="text-white-50 small text-truncate"></div>
+          </div>
+        </div>
+        <button class="btn btn-outline-light btn-sm w-100 mt-2" id="logoutBtn">Logout</button>
       </div>
     </aside>
 
@@ -81,23 +121,53 @@
       <header class="topbar">
         <button class="btn btn-outline-secondary d-lg-none" id="mobileMenuBtn" type="button"><i class="bi bi-list"></i></button>
         <div>
-          <div class="eyebrow">Hlts LTD HR Operations</div>
-          <h2 class="page-title mb-0" id="pageTitle">Dashboard</h2>
+          <div class="eyebrow">HLTS LTD Operations Hub</div>
+          <h2 class="page-title mb-0" id="pageTitle">Executive Dashboard</h2>
         </div>
-        <div class="topbar-actions">
-          <div class="badge rounded-pill text-bg-light px-3 py-2" id="liveClock"></div>
+        <div class="topbar-actions d-flex align-items-center gap-3">
+          <div class="role-switcher-wrap d-flex align-items-center gap-1" id="demoRoleSwitcher">
+            <span class="small text-muted me-1">Role:</span>
+            <button class="role-badge-btn active" data-role="ops_manager" title="Switch to Operations Manager">Ops Mgr</button>
+            <button class="role-badge-btn" data-role="supervisor" title="Switch to Academic Supervisor">Supervisor</button>
+            <button class="role-badge-btn" data-role="developer" title="Switch to Developer">Developer</button>
+            <button class="role-badge-btn" data-role="welfare_hr" title="Switch to Welfare / HR">Welfare/HR</button>
+            <button class="role-badge-btn" data-role="staff" title="Switch to General Staff">Staff</button>
+          </div>
+          <div id="singleRoleBadge" class="badge text-bg-secondary px-3 py-2 border border-secondary border-opacity-25 d-none"></div>
+          <div class="d-flex align-items-center gap-2">
+            <div class="avatar-circle avatar-sm" id="topbarAvatarDisplay" title="Current User">AD</div>
+            <div class="badge rounded-pill text-bg-light px-3 py-2" id="liveClock"></div>
+          </div>
         </div>
       </header>
 
       <div class="container-fluid px-0">
+        <!-- Operations Manager Executive Dashboard -->
         <section class="view-panel active" id="dashboardView">
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+            <div>
+              <span class="badge rounded-pill bg-primary bg-opacity-10 text-primary px-3 py-2 border border-primary border-opacity-25"><i class="bi bi-shield-check me-1"></i>Operations Command</span>
+            </div>
+            <div class="d-flex gap-2">
+              <button class="btn btn-sm btn-outline-light" id="dashboardExportBtn" data-bs-toggle="modal" data-bs-target="#dataExportModal"><i class="bi bi-download me-1"></i>Export System Data</button>
+            </div>
+          </div>
+
+          <div class="summary-grid mb-4">
+            <div class="summary-card"><span>Org Health Score</span><strong id="orgHealthCard">94%</strong></div>
+            <div class="summary-card"><span>Staff Attendance</span><strong id="presentTodayCard">0</strong></div>
+            <div class="summary-card"><span>Curriculum Pace</span><strong id="curriculumPaceCard">88%</strong></div>
+            <div class="summary-card"><span>Active Dev Projects</span><strong id="activeDevProjectsCard">4</strong></div>
+            <div class="summary-card"><span>Urgent Alerts</span><strong id="urgentAlertsCard" class="text-danger">0</strong></div>
+          </div>
+
           <div class="row g-4 mb-4">
             <div class="col-12">
               <div class="panel-card">
                 <div class="panel-header">
                   <div>
                     <h3>Task Deadline Countdowns</h3>
-                    <p>Live countdown to each active task deadline.</p>
+                    <p>Live countdown to each active task deadline across offices.</p>
                   </div>
                 </div>
                 <div class="countdown-grid" id="taskCountdownGrid"><p class="text-muted text-center py-3">No active tasks.</p></div>
@@ -105,57 +175,144 @@
             </div>
           </div>
 
-          <div class="summary-grid mb-4">
-            <div class="summary-card"><span>Total Employees</span><strong id="totalEmployeesCard">0</strong></div>
-            <div class="summary-card"><span>Present Today</span><strong id="presentTodayCard">0</strong></div>
-            <div class="summary-card"><span>Absent Today</span><strong id="absentTodayCard">0</strong></div>
-            <div class="summary-card"><span>Total Deductions</span><strong id="totalDeductionsCard">NGN 0</strong></div>
-            <div class="summary-card"><span>Net Salary Paid</span><strong id="netSalaryCard">NGN 0</strong></div>
-          </div>
-
+          <!-- 8 Executive Operations Graphs -->
           <div class="row g-4 mb-4">
+            <!-- 1. Staff Attendance -->
             <div class="col-12 col-xl-6">
               <div class="panel-card compact-chart-card">
                 <div class="panel-header">
                   <div>
-                    <h3>Attendance Trends</h3>
-                    <p>Last 7 days employee presence.</p>
+                    <h3>Staff Attendance by Office & Dept</h3>
+                    <p>Employee presence and check-in compliance trends.</p>
                   </div>
                 </div>
                 <div class="compact-chart-wrap"><canvas id="attendanceChart"></canvas></div>
               </div>
             </div>
+
+            <!-- 2. Lesson Delivery & Notes Compliance (Client vs %) -->
             <div class="col-12 col-xl-6">
               <div class="panel-card compact-chart-card">
                 <div class="panel-header">
                   <div>
-                    <h3>Task Completion</h3>
-                    <p>Completed vs incomplete tasks.</p>
+                    <h3>Lesson Notes Compliance</h3>
+                    <p>School/Client against teacher lesson note submission (%).</p>
                   </div>
                 </div>
-                <div class="compact-chart-wrap"><canvas id="tasksChart"></canvas></div>
+                <div class="compact-chart-wrap"><canvas id="lessonComplianceChart"></canvas></div>
+              </div>
+            </div>
+
+            <!-- 3. Curriculum Completion (Expected vs Actual %) -->
+            <div class="col-12 col-xl-6">
+              <div class="panel-card compact-chart-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Curriculum Completion</h3>
+                    <p>Expected vs actual syllabus progress per school/client (%).</p>
+                  </div>
+                </div>
+                <div class="compact-chart-wrap"><canvas id="curriculumChart"></canvas></div>
+              </div>
+            </div>
+
+            <!-- 4. Assessment / CBT (Client vs %) -->
+            <div class="col-12 col-xl-6">
+              <div class="panel-card compact-chart-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Assessment & CBT Conduct</h3>
+                    <p>Assessment completion and score submission rates per school (%).</p>
+                  </div>
+                </div>
+                <div class="compact-chart-wrap"><canvas id="cbtAssessmentChart"></canvas></div>
+              </div>
+            </div>
+
+            <!-- 5. Client Satisfaction (Client vs %) -->
+            <div class="col-12 col-xl-6">
+              <div class="panel-card compact-chart-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Client & School Satisfaction</h3>
+                    <p>Feedback health score and resolved complaint index per client.</p>
+                  </div>
+                </div>
+                <div class="compact-chart-wrap"><canvas id="clientSatisfactionChart"></canvas></div>
+              </div>
+            </div>
+
+            <!-- 6. Result Completion (Client vs %) -->
+            <div class="col-12 col-xl-6">
+              <div class="panel-card compact-chart-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Result Management Progress</h3>
+                    <p>Term/exam result compilation and teacher compliance per school (%).</p>
+                  </div>
+                </div>
+                <div class="compact-chart-wrap"><canvas id="resultProgressChart"></canvas></div>
+              </div>
+            </div>
+
+            <!-- 7. Developer Report Graph (Projects, Velocity, Issues) -->
+            <div class="col-12 col-xl-6">
+              <div class="panel-card compact-chart-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>Developer Projects & Velocity</h3>
+                    <p>In-house vs School website progress & issue count.</p>
+                  </div>
+                </div>
+                <div class="compact-chart-wrap"><canvas id="devProjectsChart"></canvas></div>
+              </div>
+            </div>
+
+            <!-- 8. School/Client Health and Workflow Graph -->
+            <div class="col-12 col-xl-6">
+              <div class="panel-card compact-chart-card">
+                <div class="panel-header">
+                  <div>
+                    <h3>School Health & Workflow Matrix</h3>
+                    <p>Holistic health index (Curriculum, CBT, Labs, Satisfaction).</p>
+                  </div>
+                </div>
+                <div class="compact-chart-wrap"><canvas id="schoolHealthChart"></canvas></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Management Issues & Staff Queries Snapshot on Dashboard -->
+          <div class="row g-4 mb-4">
+            <div class="col-12 col-xl-6">
+              <div class="panel-card h-100">
+                <div class="panel-header d-flex justify-content-between align-items-center">
+                  <div>
+                    <h3>Urgent Management Attention</h3>
+                    <p>High-priority items escalated across supervisors & developers.</p>
+                  </div>
+                  <button class="btn btn-sm btn-outline-primary" onclick="setActiveView('managementIssuesView')">View All</button>
+                </div>
+                <div id="dashboardIssuesContainer" class="mt-2"></div>
               </div>
             </div>
             <div class="col-12 col-xl-6">
-              <div class="panel-card compact-chart-card">
-                <div class="panel-header">
+              <div class="panel-card h-100">
+                <div class="panel-header d-flex justify-content-between align-items-center">
                   <div>
-                    <h3>Salary Deductions</h3>
-                    <p>Breakdown by penalty type.</p>
+                    <h3>Staff Queries & Appraisals</h3>
+                    <p>Recent appraisals and disciplinary queries from Welfare/HR.</p>
                   </div>
+                  <button class="btn btn-sm btn-outline-primary" onclick="setActiveView('welfareHrView')">View All</button>
                 </div>
-                <div class="compact-chart-wrap"><canvas id="deductionsChart"></canvas></div>
-              </div>
-            </div>
-            <div class="col-12 col-xl-6">
-              <div class="panel-card compact-chart-card">
-                <div class="panel-header">
-                  <div>
-                    <h3>Profit & Loss</h3>
-                    <p>Revenue, expenses, and profit.</p>
-                  </div>
+                <div class="table-responsive mt-2">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr><th>Type</th><th>Staff</th><th>Subject</th><th>Status</th></tr>
+                    </thead>
+                    <tbody id="dashboardQueriesTableBody"></tbody>
+                  </table>
                 </div>
-                <div class="compact-chart-wrap"><canvas id="financeChart"></canvas></div>
               </div>
             </div>
           </div>
@@ -170,6 +327,33 @@
           </div>
 
           <div id="staffActiveContent">
+          <!-- Staff Profile Hero Card with Avatar -->
+          <div class="panel-card mb-4 staff-hero-card">
+            <div class="d-flex flex-column flex-md-row align-items-center gap-4">
+              <div class="staff-avatar-container position-relative">
+                <div class="avatar-circle avatar-xl" id="staffPortalAvatar">
+                  <span id="staffPortalAvatarInitials">ST</span>
+                  <img id="staffPortalAvatarImg" class="avatar-img d-none" alt="Staff Profile Picture">
+                </div>
+                <label for="staffAvatarInput" class="avatar-upload-badge" title="Change Profile Picture">
+                  <i class="bi bi-camera-fill"></i>
+                  <input type="file" id="staffAvatarInput" class="d-none" accept="image/*">
+                </label>
+              </div>
+              <div class="flex-grow-1 text-center text-md-start">
+                <div class="d-flex flex-wrap align-items-center justify-content-center justify-content-md-start gap-2 mb-1">
+                  <h2 class="mb-0 fw-bold" id="staffProfileName">Staff Member</h2>
+                  <span class="badge rounded-pill text-bg-primary" id="staffProfileBadge">Staff</span>
+                </div>
+                <div class="text-white-50 small mb-3" id="staffProfileSubtitle">Employee ID • Department • Office</div>
+                <div class="d-flex flex-wrap gap-2 justify-content-center justify-content-md-start">
+                  <button class="btn btn-sm btn-outline-light" id="staffPrintPaySlipBtn"><i class="bi bi-receipt me-1"></i>View & Print Pay Slip</button>
+                  <button class="btn btn-sm btn-outline-secondary" id="staffUploadPhotoBtn" onclick="document.getElementById('staffAvatarInput').click()"><i class="bi bi-upload me-1"></i>Upload Photo</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="row g-4 mb-4">
             <div class="col-12">
               <div class="panel-card">
@@ -189,19 +373,19 @@
               <div class="summary-card h-100"><span>Staff Member</span><strong id="staffPortalStatus">Loading...</strong></div>
             </div>
             <div class="col-12 col-md-4">
-              <div class="summary-card h-100"><span>Attendance</span><strong id="staffAttendanceSummary">Loading...</strong></div>
+              <div class="summary-card h-100"><span>Attendance Today</span><strong id="staffAttendanceSummary">Loading...</strong></div>
             </div>
             <div class="col-12 col-md-4">
-              <div class="summary-card h-100"><span>Reports This Month</span><strong id="staffReportsSummary">Loading...</strong></div>
+              <div class="summary-card h-100"><span>Net Payable Salary</span><strong id="staffSalaryTopMetric">NGN 0</strong></div>
             </div>
           </div>
 
           <div class="row g-4 mb-4">
-            <div class="col-12 col-xl-4">
-              <div class="panel-card">
+            <div class="col-12 col-xl-6">
+              <div class="panel-card h-100">
                 <div class="panel-header">
                   <div>
-                    <h3>Attendance</h3>
+                    <h3>Daily Attendance Clock-In</h3>
                     <p>Clock in and out for today only.</p>
                   </div>
                 </div>
@@ -218,143 +402,30 @@
                 <div class="small text-muted mt-3" id="staffAttendanceDetail"></div>
               </div>
             </div>
-            <div class="col-12 col-xl-4">
-              <div class="panel-card">
+            <div class="col-12 col-xl-6">
+              <div class="panel-card h-100">
                 <div class="panel-header">
                   <div>
-                    <h3>Salary After Deduction</h3>
-                    <p>Net pay based on your records.</p>
+                    <h3>Salary & Payroll Summary</h3>
+                    <p>Net monthly pay based on attendance, task status, and manager adjustments.</p>
                   </div>
                 </div>
                 <div class="display-6 fw-bold" id="staffSalaryValue">NGN 0</div>
-                <div class="small text-muted mt-2">Actual salary: <strong id="staffActualSalaryValue">NGN 0</strong></div>
+                <div class="small text-muted mt-2">Base salary: <strong id="staffActualSalaryValue">NGN 0</strong></div>
                 <div class="small text-muted mt-2">Payroll period: <strong id="staffSalaryPeriodLabel">April 2026</strong></div>
                 <div class="mt-3"><span class="badge rounded-pill text-bg-danger px-3 py-2" id="staffSalaryStatus">Pending</span></div>
-                <div class="small text-muted mt-2">Includes attendance, report, task, loan, advance, and bonus adjustments.</div>
-              </div>
-            </div>
-            <div class="col-12 col-xl-4">
-              <div class="panel-card">
-                <div class="panel-header">
-                  <div>
-                    <h3>Weekly Report</h3>
-                    <p>Status for the current week.</p>
-                  </div>
-                </div>
-                <div class="small text-muted" id="staffReportsDetail"></div>
-              </div>
-            </div>
-          </div>
-
-          <div class="row g-4 mb-4">
-            <div class="col-12 col-xl-4">
-              <div class="panel-card">
-                <div class="panel-header">
-                  <div>
-                    <h3>Attendance Per Day</h3>
-                    <p>Your last 7 attendance records.</p>
-                  </div>
-                </div>
-                <div class="table-responsive">
-                  <table class="table align-middle table-hover data-table">
-                    <thead>
-                      <tr><th>Date</th><th>Time In</th><th>Time Out</th><th>Status</th></tr>
-                    </thead>
-                    <tbody id="staffDailyAttendanceBody"></tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-            <div class="col-12 col-xl-4">
-              <div class="panel-card">
-                <div class="panel-header">
-                  <div>
-                    <h3>Other Staff</h3>
-                    <p>Present staff are green, absent staff are red.</p>
-                  </div>
-                </div>
-                <div class="table-responsive">
-                  <table class="table align-middle table-hover data-table">
-                    <thead>
-                      <tr><th>Name</th><th>Status</th></tr>
-                    </thead>
-                    <tbody id="staffColleaguesBody"></tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-            <div class="col-12 col-xl-4">
-              <div class="panel-card">
-                <div class="panel-header">
-                  <div>
-                    <h3>Report Count by Month</h3>
-                    <p>Weekly reports refresh monthly.</p>
-                  </div>
-                </div>
-                <div class="table-responsive">
-                  <table class="table align-middle table-hover data-table">
-                    <thead>
-                      <tr><th>Month</th><th class="text-end">Reports</th></tr>
-                    </thead>
-                    <tbody id="staffMonthlyReportsBody"></tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="row g-4 mb-4">
-            <div class="col-12 col-xl-4">
-              <div class="panel-card">
-                <div class="panel-header">
-                  <div>
-                    <h3>Submit Weekly Report</h3>
-                    <p>Send your weekly update to the admin register.</p>
-                  </div>
-                </div>
-                <form id="staffReportForm" class="stack-form">
-                  <div>
-                    <label class="form-label">Report Title</label>
-                    <input class="form-control" id="staffReportTitle" required>
-                  </div>
-                  <div>
-                    <label class="form-label">Report Content</label>
-                    <textarea class="form-control" id="staffReportContent" rows="5" required></textarea>
-                  </div>
-                  <button class="btn btn-primary" type="submit" id="staffReportSubmitBtn">Submit Report</button>
-                  <div class="small text-muted">Your report will appear in the admin register immediately after submission.</div>
-                </form>
-              </div>
-            </div>
-            <div class="col-12 col-xl-8">
-              <div class="panel-card">
-                <div class="panel-header">
-                  <div>
-                    <h3>Weekly Report History</h3>
-                    <p>Your submitted reports and recent updates.</p>
-                  </div>
-                </div>
-                <div class="table-responsive">
-                  <table class="table align-middle table-hover data-table">
-                    <thead>
-                      <tr>
-                        <th>Submitted</th><th>Title</th><th>Preview</th>
-                      </tr>
-                    </thead>
-                    <tbody id="staffReportsBody"></tbody>
-                  </table>
-                </div>
+                <div class="small text-muted mt-2">Includes attendance deductions, task penalties, manager adjustments, loans, advances, and bonuses.</div>
               </div>
             </div>
           </div>
 
           <div class="row g-4 mb-4">
             <div class="col-12 col-xl-6">
-              <div class="panel-card">
+              <div class="panel-card h-100">
                 <div class="panel-header">
                   <div>
-                    <h3>Your Tasks</h3>
-                    <p>Progress assigned to your profile.</p>
+                    <h3>Your Assigned Tasks</h3>
+                    <p>Active and completed assignments.</p>
                   </div>
                 </div>
                 <div class="table-responsive">
@@ -370,21 +441,60 @@
               </div>
             </div>
             <div class="col-12 col-xl-6">
-              <div class="panel-card">
+              <div class="panel-card h-100">
                 <div class="panel-header">
                   <div>
-                    <h3>Your Deductions</h3>
-                    <p>Purpose and amount for each deduction.</p>
+                    <h3>Salary Deductions & Manager Adjustments</h3>
+                    <p>Detailed breakdown and official justification for any deductions applied to your salary.</p>
                   </div>
                 </div>
                 <div class="table-responsive">
                   <table class="table align-middle table-hover data-table">
                     <thead>
                       <tr>
-                        <th>Type</th><th>Purpose</th><th class="text-end">Amount</th>
+                        <th>Type</th><th>Reason / Justification</th><th>Date</th><th class="text-end">Amount</th>
                       </tr>
                     </thead>
                     <tbody id="staffDeductionsBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="row g-4 mb-4">
+            <div class="col-12 col-xl-6">
+              <div class="panel-card h-100">
+                <div class="panel-header">
+                  <div>
+                    <h3>Attendance History</h3>
+                    <p>Your last 7 attendance logs.</p>
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr><th>Date</th><th>Time In</th><th>Time Out</th><th>Status</th></tr>
+                    </thead>
+                    <tbody id="staffDailyAttendanceBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            <div class="col-12 col-xl-6">
+              <div class="panel-card h-100">
+                <div class="panel-header">
+                  <div>
+                    <h3>Colleagues & Team Presence</h3>
+                    <p>Live status of colleagues today.</p>
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr><th>Name</th><th>Position</th><th>Status</th></tr>
+                    </thead>
+                    <tbody id="staffColleaguesBody"></tbody>
                   </table>
                 </div>
               </div>
@@ -414,20 +524,32 @@
                     <input class="form-control" id="employeeEmail" type="email" placeholder="staff@hr.local" required>
                   </div>
                   <div>
-                    <label class="form-label">Position</label>
-                    <input class="form-control" id="employeePosition" required>
-                  </div>
-                  <div>
-                    <label class="form-label">Department</label>
-                    <input class="form-control" id="employeeDepartment" required>
+                    <label class="form-label">Account Role / Office Access</label>
+                    <select class="form-select" id="employeeRole" required>
+                      <option value="staff" selected>General / Teaching Staff (Staff Portal)</option>
+                      <option value="supervisor">Academic Supervisor (Academics & Schools)</option>
+                      <option value="developer">Lead Developer (Dev Operations)</option>
+                      <option value="welfare_hr">Welfare & HR Specialist (Staff & Welfare)</option>
+                      <option value="admin">Operations Manager / Admin (Full Access)</option>
+                    </select>
                   </div>
                   <div>
                     <label class="form-label">Salary (NGN)</label>
                     <input class="form-control" id="employeeSalary" type="number" min="0" step="1" required>
                   </div>
-                  <div>
-                    <label class="form-label">Assigned Office</label>
-                    <select class="form-select" id="employeeOffice" required></select>
+                  <div class="mb-3">
+                    <label class="form-label">Profile Picture</label>
+                    <div class="d-flex align-items-center gap-3">
+                      <div class="avatar-circle avatar-md" id="employeeFormAvatarPreview">
+                        <span id="employeeFormAvatarInitials">EM</span>
+                        <img id="employeeFormAvatarImg" class="avatar-img d-none" alt="Preview">
+                      </div>
+                      <div class="flex-grow-1">
+                        <input class="form-control form-control-sm" id="employeeAvatarFile" type="file" accept="image/*">
+                        <input type="hidden" id="employeeAvatarData">
+                        <div class="small text-muted mt-1">Photo auto-compressed for quick cloud sync.</div>
+                      </div>
+                    </div>
                   </div>
                   <div class="d-flex gap-2">
                     <button class="btn btn-primary flex-fill" type="submit" id="employeeSubmitBtn">Save Employee</button>
@@ -441,8 +563,8 @@
               <div class="panel-card">
                 <div class="panel-header flex-column flex-md-row align-items-md-center gap-3">
                   <div>
-                    <h3>Employee Directory</h3>
-                    <p>Search, edit, or remove staff records.</p>
+                    <h3>Employee Directory & Account Roles</h3>
+                    <p>Manage employee records and departmental office permissions.</p>
                   </div>
                   <div class="ms-md-auto search-wrap">
                     <input class="form-control" id="employeeSearch" placeholder="Search employees...">
@@ -452,7 +574,7 @@
                   <table class="table align-middle table-hover data-table">
                     <thead>
                       <tr>
-                        <th>ID</th><th>Name</th><th>Email</th><th>Username</th><th>Position</th><th>Department</th><th>Office</th><th>Salary Paid</th><th class="text-end">Salary</th><th>Actions</th>
+                        <th>ID</th><th>Name</th><th>Role</th><th>Email</th><th>Salary</th><th>Actions</th>
                       </tr>
                     </thead>
                     <tbody id="employeeTableBody"></tbody>
@@ -465,7 +587,7 @@
 
         <section class="view-panel" id="attendanceView">
           <div class="row g-4">
-            <div class="col-12 col-xl-4">
+            <div class="col-12 col-xl-4" id="attendanceFormCol">
               <div class="panel-card">
                 <div class="panel-header">
                   <div>
@@ -484,14 +606,14 @@
                     <input class="form-control" id="attendanceDate" type="date" required>
                   </div>
                   <div class="row g-3">
-                    <div class="col-6">
+                    <div class="col-6" id="attendanceStatusCol">
                       <label class="form-label">Status</label>
                       <select class="form-select" id="attendanceStatus" required>
                         <option>Present</option>
                         <option>Absent</option>
                       </select>
                     </div>
-                    <div class="col-6">
+                    <div class="col-6" id="attendancePermissionCol">
                       <label class="form-label">Permission</label>
                       <select class="form-select" id="attendancePermission">
                         <option value="No">No</option>
@@ -499,7 +621,8 @@
                       </select>
                     </div>
                   </div>
-                  <div class="row g-3">
+                  <!-- Manual Time In / Out Inputs (Operations Manager only) -->
+                  <div class="row g-3" id="attendanceTimeRow">
                     <div class="col-6">
                       <label class="form-label">Time In</label>
                       <input class="form-control" id="attendanceTimeIn" type="time">
@@ -509,14 +632,27 @@
                       <input class="form-control" id="attendanceTimeOut" type="time">
                     </div>
                   </div>
-                  <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">
+                  <!-- Sign-in and Sign-out Real-time Buttons (Supervisor and Welfare) -->
+                  <div class="row g-2 d-none mb-2" id="attendanceQuickSignRow">
+                    <div class="col-6">
+                      <button class="btn btn-success w-100 py-2 d-flex align-items-center justify-content-center gap-2" type="button" id="attendanceFormSignInBtn">
+                        <i class="bi bi-box-arrow-in-right"></i> Sign In
+                      </button>
+                    </div>
+                    <div class="col-6">
+                      <button class="btn btn-outline-light w-100 py-2 d-flex align-items-center justify-content-center gap-2" type="button" id="attendanceFormSignOutBtn">
+                        <i class="bi bi-box-arrow-right"></i> Sign Out
+                      </button>
+                    </div>
+                  </div>
+                  <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap" id="attendanceLockControlGroup">
                     <div class="small text-muted">Admin control for attendance sign-in lock.</div>
                     <div class="d-flex align-items-center gap-2">
                       <span class="badge rounded-pill text-bg-success px-3 py-2" id="adminAttendanceLockStatus">Open</span>
                       <button class="btn btn-sm btn-outline-secondary" type="button" id="attendanceLockBtn">Lock Attendance</button>
                     </div>
                   </div>
-                  <div class="d-flex gap-2">
+                  <div class="d-flex gap-2" id="attendanceSaveResetRow">
                     <button class="btn btn-primary flex-fill" type="submit" id="attendanceSubmitBtn">Save Attendance</button>
                     <button class="btn btn-outline-secondary" type="button" id="attendanceResetBtn">Reset</button>
                   </div>
@@ -524,7 +660,7 @@
                 </form>
               </div>
             </div>
-            <div class="col-12 col-xl-8">
+            <div class="col-12 col-xl-8" id="attendanceTableCol">
               <div class="panel-card">
                 <div class="panel-header flex-column flex-md-row align-items-md-center gap-3">
                   <div>
@@ -629,87 +765,539 @@
           </div>
         </section>
 
-        <section class="view-panel" id="reportsView">
+        <!-- Management Issues & Urgent Attention Hub -->
+        <section class="view-panel" id="managementIssuesView">
           <div class="row g-4">
             <div class="col-12 col-xl-4">
               <div class="panel-card">
                 <div class="panel-header">
                   <div>
-                    <h3 id="reportFormTitle">Weekly Report Submission</h3>
-                    <p>Submit and track weekly updates.</p>
+                    <h3>Operations Manager Action Hub</h3>
+                    <p>Triage and resolve critical issues escalated by supervisors, developers, and HR.</p>
                   </div>
                 </div>
-                <form id="reportForm" class="stack-form">
-                  <input type="hidden" id="reportId">
-                  <div>
-                    <label class="form-label">Employee</label>
-                    <select class="form-select" id="reportEmployee" required></select>
-                  </div>
-                  <div>
-                    <label class="form-label">Report Title</label>
-                    <input class="form-control" id="reportTitle" required>
-                  </div>
-                  <div>
-                    <label class="form-label">Report Content</label>
-                    <textarea class="form-control" id="reportContent" rows="5" required></textarea>
-                  </div>
-                  <div>
-                    <label class="form-label">Permission</label>
-                    <select class="form-select" id="reportPermission">
-                      <option value="No">No</option>
-                      <option value="Yes">Yes</option>
-                    </select>
-                  </div>
-                  <button class="btn btn-primary" type="submit" id="reportSubmitBtn">Submit Report</button>
-                  <div class="small text-muted">Submit between Friday 12:00 PM and Saturday 10:00 AM to avoid a late penalty.</div>
-                </form>
+                <div class="mb-3">
+                  <label class="form-label">Filter by Status</label>
+                  <select class="form-select" id="issueStatusFilter">
+                    <option value="all">All Issues</option>
+                    <option value="urgent" selected>Urgent & Pending Only</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="resolved">Resolved</option>
+                  </select>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label">Filter by Department / Source</label>
+                  <select class="form-select" id="issueDeptFilter">
+                    <option value="all">All Departments</option>
+                    <option value="supervisor">Academic Supervisors</option>
+                    <option value="developer">Developers Office</option>
+                    <option value="welfare_hr">Welfare / HR</option>
+                  </select>
+                </div>
+                <div class="p-3 rounded bg-dark border border-secondary border-opacity-25 small text-muted">
+                  <i class="bi bi-info-circle me-1 text-primary"></i> Urgent items submitted in weekly reports automatically route here for the Operations Manager's immediate review and intervention.
+                </div>
               </div>
             </div>
             <div class="col-12 col-xl-8">
               <div class="panel-card">
-                <div class="panel-header flex-column flex-md-row align-items-md-center gap-3">
+                <div class="panel-header d-flex justify-content-between align-items-center">
                   <div>
-                    <h3>Report Register</h3>
-                    <p>All employee submissions and penalties.</p>
-                  </div>
-                  <div class="ms-md-auto d-flex gap-2 flex-wrap">
-                    <input type="date" class="form-control form-control-sm" id="reportDateFilter" title="Filter by date (leave empty to show today only)">
-                    <input class="form-control" id="reportSearch" placeholder="Search all records...">
+                    <h3>Active Management Issues & Escalations</h3>
+                    <p>Track resolution status and management responses.</p>
                   </div>
                 </div>
-                <div class="table-responsive">
-                  <table class="table align-middle table-hover data-table">
-                    <thead>
-                      <tr>
-                        <th>Submitted</th><th>Employee</th><th>Title</th><th>Status</th><th>Permission</th><th class="text-end">Penalty</th><th></th>
-                      </tr>
-                    </thead>
-                    <tbody id="reportTableBody"></tbody>
-                  </table>
-                </div>
+                <div id="managementIssuesList" class="mt-3"></div>
               </div>
-              
-              <div class="panel-card mt-4">
+            </div>
+          </div>
+        </section>
+
+        <!-- Academic Supervisors View -->
+        <section class="view-panel" id="supervisorsView">
+          <div class="row g-4">
+            <div class="col-12 col-xl-5">
+              <div class="panel-card">
                 <div class="panel-header">
                   <div>
-                    <h3>Missing Report Penalties</h3>
-                    <p>System-generated deductions for missing weekly reports.</p>
+                    <h3 id="supervisorReportFormTitle">Supervisor Weekly Academic Report</h3>
+                    <p>Submit multi-dimensional weekly academic & lab report to the Operations Manager.</p>
+                  </div>
+                </div>
+                <div id="supNoSchoolsAlert" class="alert alert-warning d-none mb-3">
+                  <i class="bi bi-exclamation-triangle me-2"></i>
+                  <strong>No Schools Assigned:</strong> You do not currently have any partner schools assigned to your supervisor account. Please contact the Operations Manager to be assigned a school before submitting reports.
+                </div>
+                <form id="supervisorReportForm" class="stack-form">
+                  <input type="hidden" id="supervisorReportId">
+                  
+                  <div class="mb-3">
+                    <label class="form-label fw-bold">Assigned School / Client <span class="text-danger">*</span></label>
+                    <select class="form-select" id="supReportSchool" required>
+                      <option value="">Select assigned school...</option>
+                    </select>
+                    <small class="text-muted">Only schools assigned to you by the Operations Manager can be reported on.</small>
+                  </div>
+
+                  <div class="section-divider-title"><i class="bi bi-book"></i> A. Class & Lesson Delivery</div>
+                  <div class="row g-2 mb-2">
+                    <div class="col-6">
+                      <label class="form-label small">Expected Curriculum %</label>
+                      <input type="number" class="form-control" id="supCurriculumExpected" min="0" max="100" placeholder="e.g. 75" required>
+                    </div>
+                    <div class="col-6">
+                      <label class="form-label small">Actual Completion %</label>
+                      <input type="number" class="form-control" id="supCurriculumActual" min="0" max="100" placeholder="e.g. 70" required>
+                    </div>
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label small">Lesson Delivery Remarks</label>
+                    <textarea class="form-control" id="supDeliveryNotes" rows="2" placeholder="Class attendance, pace, syllabus coverage..."></textarea>
+                  </div>
+
+                  <div class="section-divider-title"><i class="bi bi-journal-check"></i> B. Lesson Notes Compliance</div>
+                  <div class="mb-2">
+                    <label class="form-label small">Overall Lesson Note Compliance %</label>
+                    <input type="number" class="form-control" id="supLessonNoteCompliance" min="0" max="100" placeholder="e.g. 85" required>
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label small">Teachers Requiring Follow-Up</label>
+                    <input type="text" class="form-control" id="supTeachersFollowUp" placeholder="e.g. Mr. David (Physics), Mrs. Clara (Math)">
+                  </div>
+
+                  <div class="section-divider-title"><i class="bi bi-laptop"></i> C. CBT / Examination</div>
+                  <div class="row g-2 mb-2">
+                    <div class="col-6">
+                      <label class="form-label small">Assessment This Week?</label>
+                      <select class="form-select" id="supAssessmentConducted">
+                        <option value="No">No</option>
+                        <option value="Yes">Yes</option>
+                      </select>
+                    </div>
+                    <div class="col-6">
+                      <label class="form-label small">Assessment Type</label>
+                      <input type="text" class="form-control" id="supAssessmentType" placeholder="Mid-Term / Test / Exam">
+                    </div>
+                  </div>
+                  <div class="row g-2 mb-2">
+                    <div class="col-6">
+                      <label class="form-label small">Assessment Completed?</label>
+                      <select class="form-select" id="supAssessmentCompleted">
+                        <option value="Yes">Yes</option>
+                        <option value="Partially">Partially</option>
+                        <option value="No">No</option>
+                      </select>
+                    </div>
+                    <div class="col-6">
+                      <label class="form-label small">Scores Submitted?</label>
+                      <select class="form-select" id="supScoresSubmitted">
+                        <option value="Yes">Yes</option>
+                        <option value="Partially">Partially</option>
+                        <option value="No">No</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="row g-2 mb-2">
+                    <div class="col-6">
+                      <label class="form-label small">CBT Status</label>
+                      <select class="form-select" id="supCbtStatus">
+                        <option value="Stable / Good">Stable / Good</option>
+                        <option value="Minor Network Glitches">Minor Glitches</option>
+                        <option value="Offline / System Errors">Offline / Errors</option>
+                      </select>
+                    </div>
+                    <div class="col-6">
+                      <label class="form-label small">Issues Encountered</label>
+                      <input type="text" class="form-control" id="supCbtIssues" placeholder="e.g. Power drop, server latency">
+                    </div>
+                  </div>
+
+                  <div class="section-divider-title"><i class="bi bi-file-earmark-bar-graph"></i> D. Result Management</div>
+                  <div class="row g-2 mb-2">
+                    <div class="col-6">
+                      <label class="form-label small">Result Progress %</label>
+                      <input type="number" class="form-control" id="supResultProgress" min="0" max="100" placeholder="e.g. 60" required>
+                    </div>
+                    <div class="col-6">
+                      <label class="form-label small">Teacher Compliance %</label>
+                      <input type="number" class="form-control" id="supTeacherResultCompliance" min="0" max="100" placeholder="e.g. 80" required>
+                    </div>
+                  </div>
+
+                  <div class="section-divider-title"><i class="bi bi-chat-square-quote"></i> E. School / Client Feedback</div>
+                  <div class="mb-2">
+                    <label class="form-label small">School Complaint / Feedback</label>
+                    <textarea class="form-control" id="supSchoolComplaint" rows="2" placeholder="Feedback from principal, administrator, or students..."></textarea>
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label small">Action Taken by Supervisor</label>
+                    <input type="text" class="form-control" id="supActionTaken" placeholder="Action executed on ground...">
+                  </div>
+                  <div class="row g-2 mb-2">
+                    <div class="col-6">
+                      <label class="form-label small">Issue Resolved?</label>
+                      <select class="form-select" id="supIsResolved">
+                        <option value="Yes">Yes</option>
+                        <option value="Partially">Partially</option>
+                        <option value="No">No</option>
+                      </select>
+                    </div>
+                    <div class="col-6">
+                      <label class="form-label small">Management Intervention?</label>
+                      <select class="form-select" id="supNeedManagementIntervention">
+                        <option value="No">No</option>
+                        <option value="Yes">Yes (Escalate)</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label small">Client Satisfaction Rating (1 - 5 Stars / %)</label>
+                    <input type="number" class="form-control" id="supSatisfactionRating" min="1" max="5" step="1" value="4" placeholder="1 to 5">
+                  </div>
+
+                  <div class="section-divider-title"><i class="bi bi-cpu"></i> F. Equipment & Lab Issues</div>
+                  <div class="mb-2">
+                    <label class="form-label small">Equipment / Lab Status & Problems</label>
+                    <input type="text" class="form-control" id="supLabIssues" placeholder="e.g. 3 computers faulty in lab, AC needs service">
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label small">Lab Issue Status</label>
+                    <select class="form-select" id="supLabStatus">
+                      <option value="Resolved / All Functional">Resolved / All Functional</option>
+                      <option value="Pending Tech Repair">Pending Tech Repair</option>
+                      <option value="Replacement Needed">Replacement Needed</option>
+                    </select>
+                  </div>
+
+                  <div class="section-divider-title text-danger"><i class="bi bi-exclamation-triangle"></i> G. Problem Requiring Urgent Attention</div>
+                  <div class="mb-2">
+                    <textarea class="form-control border-danger border-opacity-50" id="supUrgentAttention" rows="2" placeholder="Leave blank if none. Critical items will automatically escalate to the Ops Manager Dashboard!"></textarea>
+                  </div>
+
+                  <div class="section-divider-title"><i class="bi bi-calendar2-week"></i> H. Next Week's Priorities</div>
+                  <div class="mb-3">
+                    <textarea class="form-control" id="supNextWeekPriorities" rows="2" placeholder="Key goals and milestones for next week..."></textarea>
+                  </div>
+
+                  <div class="d-flex gap-2">
+                    <button class="btn btn-primary flex-fill" type="submit" id="supSubmitBtn">Submit Supervisor Report</button>
+                    <button class="btn btn-outline-secondary" type="button" id="supResetBtn">Reset</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
+            <div class="col-12 col-xl-7">
+              <div class="panel-card">
+                <div class="panel-header flex-column flex-md-row align-items-md-center gap-3">
+                  <div>
+                    <h3>Supervisor Reports History</h3>
+                    <p>Academic oversight logs per school/client.</p>
+                  </div>
+                  <div class="ms-md-auto d-flex gap-2">
+                    <select class="form-select form-select-sm filter-select" id="supSchoolFilter">
+                      <option value="all">All Schools</option>
+                    </select>
+                    <input class="form-control form-control-sm" id="supReportSearch" placeholder="Search...">
                   </div>
                 </div>
                 <div class="table-responsive">
                   <table class="table align-middle table-hover data-table">
                     <thead>
                       <tr>
-                        <th>Week Ending</th><th>Employee</th><th class="text-end">Amount</th><th>Permission</th><th>Actions</th>
+                        <th>Date</th><th>School</th><th>Curriculum</th><th>Notes %</th><th>CBT</th><th>Lab/Feedback</th><th>Action</th>
                       </tr>
                     </thead>
-                    <tbody id="missingReportPenaltiesTableBody"></tbody>
+                    <tbody id="supReportsTableBody"></tbody>
                   </table>
                 </div>
               </div>
             </div>
           </div>
         </section>
+
+        <!-- Developers Office View -->
+        <section class="view-panel" id="developersView">
+          <div class="row g-4">
+            <div class="col-12 col-xl-5">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3 id="devReportFormTitle">Developer Weekly Operations Report</h3>
+                    <p>Submit web/app development and maintenance status to Operations Manager.</p>
+                  </div>
+                </div>
+                <form id="devReportForm" class="stack-form">
+                  <input type="hidden" id="devReportId">
+
+                  <div class="section-divider-title"><i class="bi bi-kanban"></i> A. Projects Currently in Progress</div>
+                  <div id="devProjectsBuilder" class="mb-2">
+                    <!-- Dynamic project rows inserted via JS -->
+                  </div>
+                  <button type="button" class="btn btn-sm btn-outline-primary mb-3" id="devAddProjectBtn"><i class="bi bi-plus-circle me-1"></i>Add Another Project</button>
+
+                  <div class="section-divider-title"><i class="bi bi-check2-circle"></i> B. Work Completed This Week</div>
+                  <div class="mb-3">
+                    <textarea class="form-control" id="devWorkCompleted" rows="3" placeholder="Key modules deployed, bug fixes, client features finished..." required></textarea>
+                  </div>
+
+                  <div class="section-divider-title"><i class="bi bi-wrench-adjustable"></i> C. Website Maintenance & Updates</div>
+                  <div class="row g-2 mb-2">
+                    <div class="col-6">
+                      <label class="form-label small">Target Type</label>
+                      <select class="form-select" id="devMaintType">
+                        <option value="In-House Website">In-House Website</option>
+                        <option value="School / Client Portal">School / Client Portal</option>
+                      </select>
+                    </div>
+                    <div class="col-6">
+                      <label class="form-label small">Target Name / Client</label>
+                      <input type="text" class="form-control" id="devMaintTarget" placeholder="e.g. hltsltd.com or Gracefield" required>
+                    </div>
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label small">Update / Maintenance Required</label>
+                    <textarea class="form-control" id="devMaintDetails" rows="2" placeholder="Security patches, SSL update, content revisions..."></textarea>
+                  </div>
+
+                  <div class="section-divider-title text-warning"><i class="bi bi-life-preserver"></i> D. Support Required from Management</div>
+                  <div class="mb-3">
+                    <textarea class="form-control border-warning border-opacity-50" id="devSupportRequired" rows="2" placeholder="Server access, third-party API budget, client approvals..."></textarea>
+                  </div>
+
+                  <div class="d-flex gap-2">
+                    <button class="btn btn-primary flex-fill" type="submit" id="devSubmitBtn">Submit Developer Report</button>
+                    <button class="btn btn-outline-secondary" type="button" id="devResetBtn">Reset</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
+            <div class="col-12 col-xl-7">
+              <div class="panel-card">
+                <div class="panel-header flex-column flex-md-row align-items-md-center gap-3">
+                  <div>
+                    <h3>Developer Weekly Reports History</h3>
+                    <p>Track development sprints, completed tasks, and technical support requests.</p>
+                  </div>
+                  <div class="ms-md-auto">
+                    <input class="form-control form-control-sm" id="devReportSearch" placeholder="Search dev reports...">
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th><th>Developer</th><th>Active Projects</th><th>Completed Work</th><th>Support Request</th><th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody id="devReportsTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="panel-card mt-4">
+                <div class="panel-header">
+                  <div>
+                    <h3>Active Projects Directory</h3>
+                    <p>Consolidated progress of all in-house and client web platforms.</p>
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr>
+                        <th>Project</th><th>Type</th><th>Client</th><th>Progress</th><th>Status</th><th>Issues</th>
+                      </tr>
+                    </thead>
+                    <tbody id="devProjectsDirectoryTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Welfare / HR Operations View -->
+        <section class="view-panel" id="welfareHrView">
+          <div class="row g-4">
+            <div class="col-12 col-xl-5">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3 id="welfareReportFormTitle">Welfare & HR Weekly Report</h3>
+                    <p>Submit weekly staff performance, conduct, and queries directly to Operations Manager.</p>
+                  </div>
+                </div>
+                <form id="welfareReportForm" class="stack-form">
+                  <input type="hidden" id="welfareReportId">
+
+                  <div class="section-divider-title"><i class="bi bi-speedometer"></i> A. Individual Staff Performance Ratings (%)</div>
+                  <div id="welfareStaffRosterBuilder" class="mb-3">
+                    <!-- Staff roster with % score and conduct remarks -->
+                  </div>
+
+                  <div class="section-divider-title"><i class="bi bi-shield-exclamation"></i> B. Issue New Query or Appraisal</div>
+                  <div class="row g-2 mb-2">
+                    <div class="col-6">
+                      <label class="form-label small">Type</label>
+                      <select class="form-select" id="qaType">
+                        <option value="Query">Disciplinary Query</option>
+                        <option value="Appraisal">Performance Appraisal</option>
+                      </select>
+                    </div>
+                    <div class="col-6">
+                      <label class="form-label small">Staff Member</label>
+                      <select class="form-select" id="qaEmployee"></select>
+                    </div>
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label small">Subject / Focus</label>
+                    <input type="text" class="form-control" id="qaSubject" placeholder="e.g. Unpunctuality / Outstanding Contribution">
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label small">Details & Recommended Action</label>
+                    <textarea class="form-control" id="qaDetails" rows="2" placeholder="Full explanation and required action..."></textarea>
+                  </div>
+
+                  <div class="section-divider-title"><i class="bi bi-card-text"></i> General Welfare Notes</div>
+                  <div class="mb-3">
+                    <textarea class="form-control" id="welfareGeneralNotes" rows="2" placeholder="Staff health, morale, leave updates, and urgent welfare items..."></textarea>
+                  </div>
+
+                  <div class="d-flex gap-2">
+                    <button class="btn btn-primary flex-fill" type="submit" id="welfareSubmitBtn">Submit HR Report</button>
+                    <button class="btn btn-outline-secondary" type="button" id="welfareResetBtn">Reset</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
+            <div class="col-12 col-xl-7">
+              <div class="panel-card">
+                <div class="panel-header flex-column flex-md-row align-items-md-center gap-3">
+                  <div>
+                    <h3>Staff Queries & Appraisals Registry</h3>
+                    <p>Track active queries, disciplinary proceedings, and appraisals.</p>
+                  </div>
+                  <div class="ms-md-auto">
+                    <select class="form-select form-select-sm filter-select" id="qaFilter">
+                      <option value="all">All Records</option>
+                      <option value="Query">Queries Only</option>
+                      <option value="Appraisal">Appraisals Only</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th><th>Type</th><th>Staff</th><th>Subject</th><th>Status</th><th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody id="qaTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="panel-card mt-4">
+                <div class="panel-header">
+                  <div>
+                    <h3>Welfare / HR Weekly Submissions</h3>
+                    <p>Weekly executive summaries sent to the Operations Manager.</p>
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th><th>Officer</th><th>Staff Evaluated</th><th>Queries Logged</th><th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody id="welfareReportsTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Schools & Clients Directory View -->
+        <section class="view-panel" id="schoolsView">
+          <div class="row g-4">
+            <div class="col-12 col-xl-4" id="schoolFormCol">
+              <div class="panel-card">
+                <div class="panel-header">
+                  <div>
+                    <h3 id="schoolFormTitle">Add School / Client</h3>
+                    <p>Register partner schools and assign academic supervisors.</p>
+                  </div>
+                </div>
+                <form id="schoolForm" class="stack-form">
+                  <input type="hidden" id="schoolId">
+                  <div class="mb-2">
+                    <label class="form-label">School / Client Name</label>
+                    <input class="form-control" id="schoolName" placeholder="e.g. Gracefield International College" required>
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label">Client Code / Abbreviation</label>
+                    <input class="form-control" id="schoolCode" placeholder="e.g. GIC-LAGOS" required>
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label">Location / Address</label>
+                    <input class="form-control" id="schoolLocation" placeholder="e.g. Lekki Phase 1, Lagos" required>
+                  </div>
+                  <div class="row g-2 mb-2">
+                    <div class="col-6">
+                      <label class="form-label small">Contact Person</label>
+                      <input class="form-control" id="schoolContactPerson" placeholder="Principal / Admin">
+                    </div>
+                    <div class="col-6">
+                      <label class="form-label small">Contact Phone</label>
+                      <input class="form-control" id="schoolContactPhone" placeholder="+234...">
+                    </div>
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">Assigned Academic Supervisor</label>
+                    <select class="form-select" id="schoolSupervisor" required>
+                      <option value="">Select Supervisor...</option>
+                    </select>
+                  </div>
+                  <div class="d-flex gap-2">
+                    <button class="btn btn-primary flex-fill" type="submit" id="schoolSubmitBtn">Save School</button>
+                    <button class="btn btn-outline-secondary" type="button" id="schoolResetBtn">Reset</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
+            <div class="col-12 col-xl-8" id="schoolsTableCol">
+              <div class="panel-card">
+                <div class="panel-header flex-column flex-md-row align-items-md-center gap-3">
+                  <div>
+                    <h3 id="schoolsRegistryTitle">Schools & Clients Registry</h3>
+                    <p id="schoolsRegistrySubtitle">Partner institutions, assigned supervisors, and overall health status.</p>
+                  </div>
+                  <div class="ms-md-auto">
+                    <input class="form-control form-control-sm" id="schoolSearch" placeholder="Search schools...">
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table align-middle table-hover data-table">
+                    <thead>
+                      <tr>
+                        <th>School Name</th><th>Code</th><th>Supervisor</th><th>Health Status</th><th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="schoolsTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+
 
         <section class="view-panel" id="financeView">
           <div class="row g-4">
@@ -790,8 +1378,8 @@
               <div class="panel-card">
                 <div class="panel-header">
                   <div>
-                    <h3 id="payrollAdjustmentFormTitle">Payroll Adjustments</h3>
-                    <p>Record loans, salary advances, and bonuses.</p>
+                    <h3 id="payrollAdjustmentFormTitle">Payroll Adjustments & Manager Deductions</h3>
+                    <p>Apply manager salary deductions with official reasons, or record loans, advances, and bonuses.</p>
                   </div>
                 </div>
                 <form id="payrollAdjustmentForm" class="stack-form">
@@ -803,6 +1391,7 @@
                   <div>
                     <label class="form-label">Adjustment Type</label>
                     <select class="form-select" id="payrollAdjustmentType" required>
+                      <option value="Deduction" selected>Manager Salary Deduction (Disciplinary / Custom)</option>
                       <option value="Loan">Loan</option>
                       <option value="Advance">Salary Advance</option>
                       <option value="Bonus">Bonus</option>
@@ -817,8 +1406,8 @@
                     <input class="form-control" id="payrollAdjustmentDate" type="date" required>
                   </div>
                   <div>
-                    <label class="form-label">Notes</label>
-                    <textarea class="form-control" id="payrollAdjustmentNotes" rows="3" placeholder="Optional note"></textarea>
+                    <label class="form-label">Reason / Justification <span class="text-info small">(Reflects on affected staff interface)</span></label>
+                    <textarea class="form-control" id="payrollAdjustmentNotes" rows="3" placeholder="State reason (e.g. Late syllabus submission, damage to equipment, disciplinary deduction...)" required></textarea>
                   </div>
                   <div class="d-flex gap-2">
                     <button class="btn btn-primary flex-fill" type="submit" id="payrollAdjustmentSubmitBtn">Save Adjustment</button>
@@ -832,7 +1421,7 @@
                 <div class="panel-header flex-column flex-md-row align-items-md-center gap-3">
                   <div>
                     <h3>Adjustment Ledger</h3>
-                    <p>Loans and advances reduce net salary, bonuses increase it.</p>
+                    <p>Manager deductions, loans, advances, and bonuses affecting employee payouts.</p>
                   </div>
                   <div class="ms-md-auto d-flex gap-2 flex-wrap">
                     <input type="date" class="form-control form-control-sm" id="payrollAdjDateFilter" title="Filter by date (leave empty to show today only)">
@@ -843,7 +1432,7 @@
                   <table class="table align-middle table-hover data-table">
                     <thead>
                       <tr>
-                        <th>Date</th><th>Employee</th><th>Type</th><th class="text-end">Amount</th><th>Notes</th><th></th>
+                        <th>Date</th><th>Employee</th><th>Type</th><th class="text-end">Amount</th><th>Reason / Notes</th><th></th>
                       </tr>
                     </thead>
                     <tbody id="payrollAdjustmentTableBody"></tbody>
@@ -851,21 +1440,22 @@
                 </div>
               </div>
               <div class="row g-4 mb-4">
+                <div class="col-12 col-md-3"><div class="mini-metric"><span>Manager Deductions</span><strong id="payrollDeductionsMetric" class="text-danger">NGN 0</strong></div></div>
                 <div class="col-12 col-md-3"><div class="mini-metric"><span>Total Loans</span><strong id="payrollLoansMetric">NGN 0</strong></div></div>
                 <div class="col-12 col-md-3"><div class="mini-metric"><span>Total Advances</span><strong id="payrollAdvancesMetric">NGN 0</strong></div></div>
-                <div class="col-12 col-md-3"><div class="mini-metric"><span>Total Bonuses</span><strong id="payrollBonusesMetric">NGN 0</strong></div></div>
-                <div class="col-12 col-md-3"><div class="mini-metric"><span>Net Payroll</span><strong id="payrollNetMetric">NGN 0</strong></div></div>
+                <div class="col-12 col-md-3"><div class="mini-metric"><span>Total Bonuses</span><strong id="payrollBonusesMetric" class="text-success">NGN 0</strong></div></div>
               </div>
               <div class="panel-card">
                 <div class="panel-header">
                   <div>
                     <h3>Employee Salary Summary</h3>
-                    <p>Gross salary, adjustments, and final amount payable.</p>
+                    <p>Gross salary, adjustments, deductions, and final amount payable.</p>
                   </div>
-                  <div class="ms-md-auto d-flex align-items-center gap-2">
+                  <div class="ms-md-auto d-flex align-items-center gap-2 flex-wrap">
                     <label class="form-label mb-0 small text-muted" for="payrollPeriodFilter">Payroll month</label>
                     <select class="form-select" id="payrollPeriodFilter"></select>
                     <span class="badge rounded-pill text-bg-light px-3 py-2" id="payrollPeriodLabel">April 2026</span>
+                    <button class="btn btn-sm btn-success" id="batchPayrollPaidBtn"><i class="bi bi-check-all me-1"></i>Batch Mark All Paid</button>
                   </div>
                 </div>
                 <div class="table-responsive">
@@ -933,74 +1523,138 @@
             </div>
           </div>
         </section>
-
-        <section class="view-panel" id="officesView">
-          <div class="row g-4">
-            <div class="col-12 col-xl-4">
-              <div class="panel-card">
-                <div class="panel-header">
-                  <div>
-                    <h3 id="officeFormTitle">Create Office</h3>
-                    <p>Manage office geolocation settings.</p>
-                  </div>
-                </div>
-                <form id="officeForm" class="stack-form">
-                  <input type="hidden" id="officeId">
-                  <div>
-                    <label class="form-label">Office Name</label>
-                    <input class="form-control" id="officeName" required placeholder="e.g. Lagos Headquarters">
-                  </div>
-                  <div class="row g-3">
-                    <div class="col-6">
-                      <label class="form-label">Latitude</label>
-                      <input class="form-control" id="officeLatitude" type="number" step="any" required placeholder="e.g. 6.5244">
-                    </div>
-                    <div class="col-6">
-                      <label class="form-label">Longitude</label>
-                      <input class="form-control" id="officeLongitude" type="number" step="any" required placeholder="e.g. 3.3792">
-                    </div>
-                  </div>
-                  <div>
-                    <label class="form-label">Allowed Radius (meters)</label>
-                    <input class="form-control" id="officeRadius" type="number" min="10" max="10000" step="5" required placeholder="e.g. 100">
-                  </div>
-                  <div class="d-flex gap-2">
-                    <button class="btn btn-primary flex-fill" type="submit" id="officeSubmitBtn">Save Office</button>
-                    <button class="btn btn-outline-secondary" type="button" id="officeResetBtn">Reset</button>
-                  </div>
-                </form>
-              </div>
-            </div>
-            <div class="col-12 col-xl-8">
-              <div class="panel-card">
-                <div class="panel-header flex-column flex-md-row align-items-md-center gap-3">
-                  <div>
-                    <h3>Office Registry</h3>
-                    <p>Configured offices and check-in boundaries.</p>
-                  </div>
-                </div>
-                <div class="table-responsive">
-                  <table class="table align-middle table-hover data-table">
-                    <thead>
-                      <tr>
-                        <th>Office Name</th><th>Latitude</th><th>Longitude</th><th>Radius</th><th>Employees</th><th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody id="officeTableBody"></tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
       </div>
     </main>
+  </div>
+
+  <!-- Report Detail Inspector Modal -->
+  <div class="modal fade" id="reportDetailModal" tabindex="-1" aria-labelledby="reportDetailModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+      <div class="modal-content dark-modal">
+        <div class="modal-header">
+          <h5 class="modal-title" id="reportDetailModalTitle">Weekly Report Breakdown</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body" id="reportDetailModalBody">
+          <!-- Dynamic report details inserted here -->
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-light" onclick="window.print()"><i class="bi bi-printer me-1"></i>Print Report</button>
+          <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Management Issue Action Modal -->
+  <div class="modal fade" id="managementIssueModal" tabindex="-1" aria-labelledby="managementIssueModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content dark-modal">
+        <div class="modal-header">
+          <h5 class="modal-title" id="managementIssueModalTitle">Update Management Escalation</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="modalIssueId">
+          <div class="mb-3">
+            <label class="form-label text-muted small">Issue / Problem Summary</label>
+            <div class="p-2 rounded bg-dark border border-secondary border-opacity-25" id="modalIssueSummary"></div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Resolution Status</label>
+            <select class="form-select" id="modalIssueStatus">
+              <option value="urgent">Urgent / Pending</option>
+              <option value="in_progress">In Progress / Investigating</option>
+              <option value="resolved">Resolved</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Operations Manager Notes & Directives</label>
+            <textarea class="form-control" id="modalIssueNotes" rows="3" placeholder="Action taken or response instructions..."></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="modalSaveIssueBtn">Save & Update</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Printable Staff Pay Slip Modal -->
+  <div class="modal fade" id="staffPaySlipModal" tabindex="-1" aria-labelledby="staffPaySlipModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+      <div class="modal-content dark-modal" id="printablePaySlipCard">
+        <div class="modal-header border-bottom border-secondary border-opacity-25">
+          <div class="d-flex align-items-center gap-2">
+            <span class="brand-mark"><img src="logo.jpg" alt="Logo" style="width:28px;height:28px;border-radius:6px;"></span>
+            <h5 class="modal-title mb-0" id="staffPaySlipModalTitle">Staff Salary Voucher & Statement</h5>
+          </div>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body p-4" id="staffPaySlipModalBody">
+          <!-- Dynamic pay slip content populated via JS -->
+        </div>
+        <div class="modal-footer border-top border-secondary border-opacity-25">
+          <button type="button" class="btn btn-outline-light" onclick="window.print()"><i class="bi bi-printer me-1"></i>Print Pay Slip</button>
+          <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- System Data Export & Backup Modal -->
+  <div class="modal fade" id="dataExportModal" tabindex="-1" aria-labelledby="dataExportModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content dark-modal">
+        <div class="modal-header border-bottom border-secondary border-opacity-25">
+          <h5 class="modal-title" id="dataExportModalTitle"><i class="bi bi-cloud-arrow-down me-2 text-primary"></i>Export Organization Data</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body p-4">
+          <p class="text-white-50 small mb-4">Export complete records for archiving, auditing, or Excel spreadsheet analysis.</p>
+          <div class="d-grid gap-3">
+            <button class="btn btn-outline-light text-start p-3 d-flex align-items-center justify-content-between" id="exportFullJsonBtn">
+              <div>
+                <div class="fw-bold text-white"><i class="bi bi-filetype-json text-warning me-2"></i>Full System Backup (.JSON)</div>
+                <div class="small text-white-50">Complete snapshot of database for offline disaster recovery.</div>
+              </div>
+              <i class="bi bi-download fs-5"></i>
+            </button>
+            <button class="btn btn-outline-light text-start p-3 d-flex align-items-center justify-content-between" id="exportPayrollCsvBtn">
+              <div>
+                <div class="fw-bold text-white"><i class="bi bi-filetype-csv text-success me-2"></i>Payroll & Deductions Ledger (.CSV)</div>
+                <div class="small text-white-50">Monthly salaries, manager deductions with reasons, net pay.</div>
+              </div>
+              <i class="bi bi-download fs-5"></i>
+            </button>
+            <button class="btn btn-outline-light text-start p-3 d-flex align-items-center justify-content-between" id="exportAttendanceCsvBtn">
+              <div>
+                <div class="fw-bold text-white"><i class="bi bi-filetype-csv text-info me-2"></i>Attendance & Time Tracking (.CSV)</div>
+                <div class="small text-white-50">Daily check-ins, time in/out, late arrivals and penalties.</div>
+              </div>
+              <i class="bi bi-download fs-5"></i>
+            </button>
+            <button class="btn btn-outline-light text-start p-3 d-flex align-items-center justify-content-between" id="exportSupervisorsCsvBtn">
+              <div>
+                <div class="fw-bold text-white"><i class="bi bi-filetype-csv text-primary me-2"></i>Supervisor School Reports (.CSV)</div>
+                <div class="small text-white-50">Curriculum coverage, lesson notes, and client ratings.</div>
+              </div>
+              <i class="bi bi-download fs-5"></i>
+            </button>
+          </div>
+        </div>
+        <div class="modal-footer border-top border-secondary border-opacity-25">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toastContainer"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-  <script type="module" src="app.js"></script>
+  <script type="module" src="app.js?v=20260905_1605"></script>
 </body>
 </html>
