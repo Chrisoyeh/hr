@@ -19,6 +19,9 @@ export const defaultSeed = {
   tasks: [],
   reports: [],
   income: [],
+  financeTransactions: [],
+  departmentBudgets: {},
+  clientInvoices: [],
   payrollAdjustments: [],
   payrollPayments: [],
   missingReportPenalties: [],
@@ -54,6 +57,26 @@ export function saveSession(session) {
 }
 
 export function normalizeDatabase(database) {
+  // Legacy migration for financeTransactions from income
+  let legacyTransactions = Array.isArray(database?.financeTransactions) ? [...database.financeTransactions] : [];
+  if (legacyTransactions.length === 0 && Array.isArray(database?.income) && database.income.length > 0) {
+    legacyTransactions = database.income.map((inc, index) => ({
+      id: inc.id || crypto.randomUUID(),
+      txnRef: `TXN-${String(inc.date || todayISO(0)).replace(/-/g, '').slice(2, 6)}-${String(index + 1).padStart(3, '0')}`,
+      type: inc.type || 'Revenue',
+      category: inc.category || 'General',
+      department: inc.department || 'General',
+      amount: Number(inc.amount || 0),
+      date: inc.date || todayISO(0),
+      description: inc.description || '',
+      paymentMethod: inc.paymentMethod || 'Bank Transfer',
+      status: inc.status || 'Completed',
+      referenceNo: inc.referenceNo || '',
+      payeePayer: inc.payeePayer || '',
+      createdAt: inc.createdAt || new Date().toISOString()
+    }));
+  }
+
   return {
     users: Array.isArray(database?.users) && database.users.length ? database.users : [...defaultSeed.users],
     employees: Array.isArray(database?.employees) ? database.employees : [],
@@ -67,6 +90,9 @@ export function normalizeDatabase(database) {
     tasks: Array.isArray(database?.tasks) ? database.tasks : [],
     reports: Array.isArray(database?.reports) ? database.reports : [],
     income: Array.isArray(database?.income) ? database.income : [],
+    financeTransactions: legacyTransactions,
+    departmentBudgets: database?.departmentBudgets && typeof database.departmentBudgets === 'object' ? database.departmentBudgets : {},
+    clientInvoices: Array.isArray(database?.clientInvoices) ? database.clientInvoices : [],
     payrollAdjustments: Array.isArray(database?.payrollAdjustments) ? database.payrollAdjustments : [],
     payrollPayments: Array.isArray(database?.payrollPayments) ? database.payrollPayments : [],
     missingReportPenalties: Array.isArray(database?.missingReportPenalties) ? database.missingReportPenalties : [],
@@ -231,3 +257,17 @@ export function setAttendanceLockState(locked) {
   if (!state.db.settings) state.db.settings = {};
   state.db.settings.attendanceLocked = Boolean(locked);
 }
+
+// ── Finance & Invoice Generators ──
+export function generateTransactionRef() {
+  const count = (state.db?.financeTransactions?.length || 0) + 1;
+  const yearMonth = todayISO(0).slice(2, 7).replace('-', '');
+  return `TXN-${yearMonth}-${String(count).padStart(4, '0')}`;
+}
+
+export function generateInvoiceNumber() {
+  const count = (state.db?.clientInvoices?.length || 0) + 1;
+  const year = new Date().getFullYear();
+  return `INV-${year}-${String(count).padStart(4, '0')}`;
+}
+

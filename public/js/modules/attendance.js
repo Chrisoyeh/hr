@@ -131,7 +131,7 @@ export function resetAttendanceForm() {
   if (dom.attendanceSubmitBtn) dom.attendanceSubmitBtn.textContent = 'Save Attendance';
 }
 
-export function handleAttendanceFormQuickSign(action, refreshAll) {
+export async function handleAttendanceFormQuickSign(action, refreshAll) {
   const currentRole = state.session?.role || 'admin';
   const isOpsManager = currentRole === 'admin' || currentRole === 'ops_manager';
   const isWelfare = currentRole === 'welfare_hr';
@@ -184,13 +184,13 @@ export function handleAttendanceFormQuickSign(action, refreshAll) {
     });
   }
 
-  saveDatabase();
+  await saveDatabase();
   resetAttendanceForm();
   showToast(`${action === 'check-in' ? 'Sign-in' : 'Sign-out'} recorded for ${employeeName} at ${now}.`, 'success');
   if (typeof refreshAll === 'function') refreshAll();
 }
 
-export function upsertAttendance(event, refreshAll) {
+export async function upsertAttendance(event, refreshAll) {
   event.preventDefault();
   const currentRole = state.session?.role || 'admin';
   const isOpsManager = currentRole === 'admin' || currentRole === 'ops_manager';
@@ -255,7 +255,7 @@ export function upsertAttendance(event, refreshAll) {
     }
   }
 
-  saveDatabase();
+  await saveDatabase();
   resetAttendanceForm();
   if (typeof refreshAll === 'function') refreshAll();
 }
@@ -317,14 +317,14 @@ export async function submitStaffAttendance(action, refreshAll) {
     });
   }
 
-  saveDatabase();
+  await saveDatabase();
   showToast(action === 'check-in' ? 'Check-in recorded.' : 'Check-out recorded.', 'success');
   if (typeof refreshAll === 'function') refreshAll();
 }
 
-export function toggleAttendanceLock(refreshAll) {
+export async function toggleAttendanceLock(refreshAll) {
   setAttendanceLockState(!getAttendanceLockState());
-  saveDatabase();
+  await saveDatabase();
   showToast(getAttendanceLockState() ? 'Attendance locked.' : 'Attendance unlocked.', 'success');
   if (typeof refreshAll === 'function') refreshAll();
 }

@@ -42,16 +42,67 @@ export function timeToMinutes(timeValue) {
   return hours * 60 + minutes;
 }
 
+function sha256Fallback(ascii) {
+  function rightRotate(v, a) { return (v >>> a) | (v << (32 - a)); }
+  const mathPow = Math.pow, maxWord = mathPow(2, 32), len = 'length';
+  let i, j, result = '', words = [], asciiBitLength = ascii[len] * 8, hash = [], k = [], primeCounter = 0;
+  const isPrime = (n) => { for (let f = 2, sq = Math.sqrt(n); f <= sq; f++) if (n % f === 0) return false; return true; };
+  const getFractionalBits = (n) => ((n - Math.floor(n)) * maxWord) | 0;
+  for (let c = 2; primeCounter < 64; c++) {
+    if (isPrime(c)) {
+      if (primeCounter < 8) hash[primeCounter] = getFractionalBits(mathPow(c, 1 / 2));
+      k[primeCounter] = getFractionalBits(mathPow(c, 1 / 3));
+      primeCounter++;
+    }
+  }
+  ascii += '\x80';
+  while ((ascii[len] % 64) - 56) ascii += '\x00';
+  for (i = 0; i < ascii[len]; i++) {
+    j = ascii.charCodeAt(i);
+    words[i >> 2] |= j << (((3 - i) % 4) * 8);
+  }
+  words[words[len]] = (asciiBitLength / maxWord) | 0;
+  words[words[len]] = asciiBitLength;
+  for (j = 0; j < words[len]; ) {
+    const w = words.slice(j, (j += 16));
+    const oldHash = hash;
+    hash = hash.slice(0, 8);
+    for (i = 0; i < 64; i++) {
+      const w15 = w[i - 15], w2 = w[i - 2], a = hash[0], e = hash[4];
+      const temp1 = hash[7] + (rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25)) + ((e & hash[5]) ^ (~e & hash[6])) + k[i] + (w[i] = i < 16 ? w[i] : (w[i - 16] + (rightRotate(w15, 7) ^ rightRotate(w15, 18) ^ (w15 >>> 3)) + w[i - 7] + (rightRotate(w2, 17) ^ rightRotate(w2, 19) ^ (w2 >>> 10))) | 0);
+      const temp2 = (rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22)) + ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
+      hash = [(temp1 + temp2) | 0, hash[0], hash[1], hash[2], (hash[3] + temp1) | 0, hash[4], hash[5], hash[6]];
+    }
+    for (i = 0; i < 8; i++) hash[i] = (hash[i] + oldHash[i]) | 0;
+  }
+  for (i = 0; i < 8; i++) {
+    for (j = 3; j >= 0; j--) {
+      const b = (hash[i] >> (8 * j)) & 255;
+      result += (b < 16 ? '0' : '') + b.toString(16);
+    }
+  }
+  return result;
+}
+
 const passwordHashCache = new Map();
 export async function hashPassword(password) {
   if (passwordHashCache.has(password)) {
     return passwordHashCache.get(password);
   }
-  const encoded = new TextEncoder().encode(password);
-  const digest = await crypto.subtle.digest('SHA-256', encoded);
-  const hash = Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
-  passwordHashCache.set(password, hash);
-  return hash;
+  try {
+    if (typeof crypto !== 'undefined' && crypto?.subtle?.digest) {
+      const encoded = new TextEncoder().encode(password);
+      const digest = await crypto.subtle.digest('SHA-256', encoded);
+      const hash = Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+      passwordHashCache.set(password, hash);
+      return hash;
+    }
+  } catch (err) {
+    console.warn('crypto.subtle failed, falling back to JS SHA-256:', err);
+  }
+  const fallbackHash = sha256Fallback(password);
+  passwordHashCache.set(password, fallbackHash);
+  return fallbackHash;
 }
 
 export function generatePassword(length = 10) {

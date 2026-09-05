@@ -61,7 +61,7 @@ export function resetTaskForm() {
   if (dom.taskFormTitle) dom.taskFormTitle.textContent = 'Assign Task';
 }
 
-export function upsertTask(event, refreshAll) {
+export async function upsertTask(event, refreshAll) {
   event.preventDefault();
   const empId = dom.taskEmployee?.value;
   if (!empId) {
@@ -89,7 +89,7 @@ export function upsertTask(event, refreshAll) {
     showToast('Task assigned.', 'success');
   }
 
-  saveDatabase();
+  await saveDatabase();
   resetTaskForm();
   if (typeof refreshAll === 'function') refreshAll();
 }

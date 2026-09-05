@@ -1,7 +1,7 @@
 import { dom, cacheDom } from './js/modules/dom.js';
-import { state, loadSession, saveSession, getPayrollPayment, setPayrollPayment, getPayrollPeriodLabel, getSelectedPayrollPeriodKey, getCurrentPayrollPeriodKey } from './js/state.js';
-import { loadDatabase, saveDatabase, startRealtimeListener } from './js/services/firestore.js';
-import { exportFullSystemJson, exportPayrollCsv, exportAttendanceCsv, exportSupervisorsCsv } from './js/services/export.js';
+import { state, normalizeDatabase, loadSession, saveSession, getPayrollPayment, setPayrollPayment, getPayrollPeriodLabel, getSelectedPayrollPeriodKey, getCurrentPayrollPeriodKey } from './js/state.js';
+import { loadDatabase, saveDatabase, startRealtimeListener, purgeHistoricalDataBeforeToday } from './js/services/firestore.js';
+import { exportFullSystemJson, exportPayrollCsv, exportAttendanceCsv, exportSupervisorsCsv, exportFinanceLedgerCsv, exportInvoicesCsv } from './js/services/export.js';
 import { renderUserAvatars, compressImage, updateAvatarElement, debounce, showToast, todayISO, showAppLoading, updateAppLoading, hideAppLoading } from './js/utils.js';
 
 import { handleLogin, logout, configureRoleUi, switchDemoRole, setupLiveClock } from './js/modules/auth.js';
@@ -14,9 +14,10 @@ import { renderSchoolsView, upsertSchool, resetSchoolForm, deleteSchool } from '
 import { renderEmployees, upsertEmployee, resetEmployeeForm, buildSelectOptions } from './js/modules/employees.js';
 import { renderAttendance, upsertAttendance, resetAttendanceForm, submitStaffAttendance, toggleAttendanceLock, handleAttendanceFormQuickSign, isLate, getAttendancePenalty } from './js/modules/attendance.js';
 import { renderTasks, upsertTask, resetTaskForm, renderTaskCountdowns, updateCountdownDisplays } from './js/modules/tasks.js';
-import { renderPayrollAdjustments, submitPayrollAdjustment, resetPayrollAdjustmentForm, getEmployeeDeductions, getStaffDeductionRows, getPayrollTotals, batchMarkAllPayrollPaid, openStaffPaySlipModal, populatePayrollPeriodFilter } from './js/modules/payroll.js';
-import { renderFinance, submitIncome } from './js/modules/finance.js';
+import { renderPayrollAdjustments, submitPayrollAdjustment, resetPayrollAdjustmentForm, getEmployeeDeductions, getStaffDeductionRows, getPayrollTotals, batchMarkAllPayrollPaid, openStaffPaySlipModal, populatePayrollPeriodFilter, reconcilePayrollWithFinance } from './js/modules/payroll.js';
+import { renderFinance, submitIncome, resetIncomeForm, openTransactionDetailModal } from './js/modules/finance.js';
 import { renderBudget, submitBudget } from './js/modules/budget.js';
+import { renderInvoices, submitInvoice, resetInvoiceForm, settleInvoice, openPrintInvoiceModal } from './js/modules/invoicing.js';
 import { renderStaffPortal } from './js/modules/staffPortal.js';
 
 export function setActiveView(viewId) {
@@ -40,7 +41,7 @@ export function setActiveView(viewId) {
     employeesView: 'Employee Management',
     attendanceView: 'Daily Attendance & Time Tracking',
     tasksView: 'Task Assignment & Deadlines',
-    financeView: 'Financial Records',
+    financeView: 'Financial Records & General Ledger',
     payrollView: 'Payroll Adjustments & Manager Deductions',
     budgetView: 'Budget Planner & Spending Limits',
     staffView: 'Staff Self-Service Portal'
@@ -58,6 +59,7 @@ export function refreshAll() {
   renderTasks();
   renderTaskCountdowns();
   renderFinance();
+  renderInvoices();
   renderPayrollAdjustments();
   renderBudget(getPayrollTotals);
   renderManagementIssues();
@@ -79,7 +81,7 @@ export function refreshAll() {
   requestAnimationFrame(init3DTilt);
 }
 
-function handleTableActions(event) {
+async function handleTableActions(event) {
   const button = event.target.closest('[data-action]');
   if (!button) return;
   const { action, id } = button.dataset;
@@ -88,6 +90,7 @@ function handleTableActions(event) {
     const employee = (state.db?.employees || []).find((item) => item.id === id);
     if (!employee) return;
     const user = (state.db?.users || []).find((u) => u.employeeId === employee.id || u.email === employee.email);
+    if (dom.employeeOriginalId) dom.employeeOriginalId.value = employee.id;
     if (dom.employeeId) dom.employeeId.value = employee.id;
     if (dom.employeeName) dom.employeeName.value = employee.fullName;
     if (dom.employeeEmail) dom.employeeEmail.value = employee.email || '';
@@ -95,7 +98,7 @@ function handleTableActions(event) {
     if (dom.employeeAvatarData) dom.employeeAvatarData.value = employee.avatar || '';
     if (dom.employeeFormAvatarPreview) updateAvatarElement(dom.employeeFormAvatarPreview, employee.fullName, employee.avatar);
     if (dom.employeeSalary) dom.employeeSalary.value = employee.salary;
-    if (dom.employeeFormTitle) dom.employeeFormTitle.textContent = `Edit ${employee.id}`;
+    if (dom.employeeFormTitle) dom.employeeFormTitle.textContent = `Edit Employee (${employee.id})`;
     if (dom.employeeSubmitBtn) dom.employeeSubmitBtn.textContent = 'Update Employee';
     setActiveView('employeesView');
   }
@@ -120,7 +123,7 @@ function handleTableActions(event) {
 
     state.db.employees = state.db.employees.map((item) => (item.id === id ? { ...item, active: nextActive } : item));
     state.db.users = state.db.users.map((item) => (item.employeeId === id ? { ...item, active: nextActive } : item));
-    saveDatabase();
+    await saveDatabase();
     showToast(nextActive ? 'Employee reactivated.' : 'Employee deactivated.', 'success');
     refreshAll();
     return;
@@ -130,7 +133,7 @@ function handleTableActions(event) {
     if (!confirm('Are you sure you want to delete this employee?')) return;
     state.db.employees = (state.db?.employees || []).filter((item) => item.id !== id);
     state.db.users = (state.db?.users || []).filter((item) => item.employeeId !== id);
-    saveDatabase();
+    await saveDatabase();
     showToast('Employee deleted.', 'success');
     refreshAll();
   }
@@ -152,7 +155,7 @@ function handleTableActions(event) {
 
   if (action === 'delete-attendance') {
     state.db.attendance = (state.db?.attendance || []).filter((item) => item.id !== id);
-    saveDatabase();
+    await saveDatabase();
     showToast('Attendance entry removed.', 'success');
     refreshAll();
   }
@@ -174,17 +177,76 @@ function handleTableActions(event) {
   if (action === 'delete-task') {
     if (!confirm('Are you sure you want to delete this task?')) return;
     state.db.tasks = (state.db?.tasks || []).filter((item) => item.id !== id);
-    saveDatabase();
+    await saveDatabase();
     showToast('Task deleted.', 'success');
     refreshAll();
   }
 
+  if (action === 'view-txn-detail') {
+    openTransactionDetailModal(id);
+  }
+
+  if (action === 'edit-income') {
+    const txn = (state.db?.financeTransactions || []).find((item) => item.id === id);
+    if (!txn) return;
+    if (dom.incomeId) dom.incomeId.value = txn.id;
+    if (dom.incomeType) dom.incomeType.value = txn.type || 'Expense';
+    if (dom.incomeCategory) dom.incomeCategory.value = txn.category || '';
+    if (dom.incomeDepartment) dom.incomeDepartment.value = txn.department || 'General';
+    if (dom.incomeAmount) dom.incomeAmount.value = txn.amount || 0;
+    if (dom.incomeDate) dom.incomeDate.value = txn.date || todayISO(0);
+    if (dom.incomePaymentMethod) dom.incomePaymentMethod.value = txn.paymentMethod || 'Bank Transfer';
+    if (dom.incomeStatus) dom.incomeStatus.value = txn.status || 'Completed';
+    if (dom.incomePayeePayer) dom.incomePayeePayer.value = txn.payeePayer || '';
+    if (dom.incomeReferenceNo) dom.incomeReferenceNo.value = txn.referenceNo || '';
+    if (dom.incomeDescription) dom.incomeDescription.value = txn.description || '';
+    if (dom.incomeFormTitle) dom.incomeFormTitle.textContent = `Edit Transaction ${txn.txnRef || ''}`;
+    if (dom.incomeSubmitBtn) dom.incomeSubmitBtn.textContent = 'Update Transaction';
+    setActiveView('financeView');
+  }
+
   if (action === 'delete-income') {
-    if (!confirm('Delete this finance entry?')) return;
+    if (!confirm('Delete this finance transaction record?')) return;
+    state.db.financeTransactions = (state.db?.financeTransactions || []).filter((item) => item.id !== id);
     state.db.income = (state.db?.income || []).filter((item) => item.id !== id);
     saveDatabase();
     showToast('Finance entry removed.', 'success');
     refreshAll();
+  }
+
+  if (action === 'view-invoice') {
+    openPrintInvoiceModal(id);
+  }
+
+  if (action === 'settle-invoice') {
+    settleInvoice(id, refreshAll);
+  }
+
+  if (action === 'edit-invoice') {
+    const inv = (state.db?.clientInvoices || []).find((item) => item.id === id);
+    if (!inv) return;
+    if (dom.invoiceId) dom.invoiceId.value = inv.id;
+    if (dom.invoiceSchoolSelect) dom.invoiceSchoolSelect.value = inv.schoolId || '';
+    if (dom.invoiceAmount) dom.invoiceAmount.value = inv.amount || 0;
+    if (dom.invoiceIssueDate) dom.invoiceIssueDate.value = inv.issueDate || todayISO(0);
+    if (dom.invoiceDueDate) dom.invoiceDueDate.value = inv.dueDate || '';
+    if (dom.invoiceStatus) dom.invoiceStatus.value = inv.status || 'Sent';
+    if (dom.invoiceDescription) dom.invoiceDescription.value = inv.description || '';
+    if (dom.invoiceFormTitle) dom.invoiceFormTitle.textContent = `Edit Invoice ${inv.invoiceNumber}`;
+    if (dom.invoiceSubmitBtn) dom.invoiceSubmitBtn.textContent = 'Update Invoice';
+    setActiveView('financeView');
+  }
+
+  if (action === 'delete-invoice') {
+    if (!confirm('Delete this client invoice?')) return;
+    state.db.clientInvoices = (state.db?.clientInvoices || []).filter((item) => item.id !== id);
+    saveDatabase();
+    showToast('Invoice deleted.', 'success');
+    refreshAll();
+  }
+
+  if (action === 'view-employee-payslip') {
+    openStaffPaySlipModal(button.dataset.employeeId, button.dataset.periodKey);
   }
 
   if (action === 'edit-payroll-adjustment') {
@@ -307,7 +369,7 @@ function handleTableActions(event) {
   if (action === 'delete-qa') {
     if (!confirm('Are you sure you want to delete this appraisal/query record?')) return;
     state.db.staffAppraisalsQueries = (state.db?.staffAppraisalsQueries || []).filter(q => q.id !== id);
-    saveDatabase();
+    await saveDatabase();
     showToast('Record deleted.', 'success');
     refreshAll();
   }
@@ -315,7 +377,7 @@ function handleTableActions(event) {
   if (action === 'delete-management-issue') {
     if (!confirm('Delete this management issue record?')) return;
     state.db.managementIssues = (state.db?.managementIssues || []).filter(i => i.id !== id);
-    saveDatabase();
+    await saveDatabase();
     showToast('Management issue deleted.', 'success');
     refreshAll();
   }
@@ -323,7 +385,7 @@ function handleTableActions(event) {
   if (action === 'delete-sup-report') {
     if (!confirm('Delete this supervisor academic report?')) return;
     state.db.reportsSupervisor = (state.db?.reportsSupervisor || []).filter(r => r.id !== id);
-    saveDatabase();
+    await saveDatabase();
     showToast('Supervisor report deleted.', 'success');
     refreshAll();
   }
@@ -331,7 +393,7 @@ function handleTableActions(event) {
   if (action === 'delete-dev-report') {
     if (!confirm('Delete this developer operations report?')) return;
     state.db.reportsDeveloper = (state.db?.reportsDeveloper || []).filter(r => r.id !== id);
-    saveDatabase();
+    await saveDatabase();
     showToast('Developer report deleted.', 'success');
     refreshAll();
   }
@@ -339,7 +401,7 @@ function handleTableActions(event) {
   if (action === 'delete-welfare-report') {
     if (!confirm('Delete this welfare weekly report?')) return;
     state.db.reportsWelfare = (state.db?.reportsWelfare || []).filter(r => r.id !== id);
-    saveDatabase();
+    await saveDatabase();
     showToast('Welfare report deleted.', 'success');
     refreshAll();
   }
@@ -376,7 +438,10 @@ function handleTableActions(event) {
 }
 
 function bindEvents() {
-  if (dom.loginForm) dom.loginForm.addEventListener('submit', (e) => handleLogin(e, () => { configureRoleUi(setActiveView); bootApp(); }));
+  const onLogin = (e) => handleLogin(e, () => { configureRoleUi(setActiveView); bootApp(); });
+  if (dom.loginForm) dom.loginForm.addEventListener('submit', onLogin);
+  const loginBtn = document.querySelector('#loginForm button[type="submit"]');
+  if (loginBtn) loginBtn.addEventListener('click', onLogin);
   if (dom.logoutBtn) dom.logoutBtn.addEventListener('click', logout);
   
   const backdrop = document.getElementById('sidebarBackdrop');
@@ -399,10 +464,26 @@ function bindEvents() {
   if (dom.taskResetBtn) dom.taskResetBtn.addEventListener('click', resetTaskForm);
   if (dom.attendanceResetBtn) dom.attendanceResetBtn.addEventListener('click', resetAttendanceForm);
   if (dom.incomeForm) dom.incomeForm.addEventListener('submit', (e) => submitIncome(e, refreshAll));
+  if (dom.incomeResetBtn) dom.incomeResetBtn.addEventListener('click', resetIncomeForm);
+  if (dom.financeRangeFilter) dom.financeRangeFilter.addEventListener('change', renderFinance);
+  if (dom.financeDeptFilter) dom.financeDeptFilter.addEventListener('change', renderFinance);
+  if (dom.financeTypeFilter) dom.financeTypeFilter.addEventListener('change', renderFinance);
+  if (dom.financeSearch) dom.financeSearch.addEventListener('input', debounce(renderFinance, 150));
+  if (dom.exportFinanceCsvBtn) dom.exportFinanceCsvBtn.addEventListener('click', exportFinanceLedgerCsv);
+
+  // Invoicing Event Listeners
+  if (dom.invoiceForm) dom.invoiceForm.addEventListener('submit', (e) => submitInvoice(e, refreshAll));
+  if (dom.invoiceResetBtn) dom.invoiceResetBtn.addEventListener('click', resetInvoiceForm);
+  if (dom.invoiceStatusFilter) dom.invoiceStatusFilter.addEventListener('change', renderInvoices);
+  if (dom.invoiceSearch) dom.invoiceSearch.addEventListener('input', debounce(renderInvoices, 150));
+  if (dom.exportInvoicesCsvBtn) dom.exportInvoicesCsvBtn.addEventListener('click', exportInvoicesCsv);
+
+  // Payroll Reconciliation Listener
+  if (dom.reconcilePayrollBtn) dom.reconcilePayrollBtn.addEventListener('click', () => reconcilePayrollWithFinance(refreshAll));
+
   if (dom.payrollAdjustmentForm) dom.payrollAdjustmentForm.addEventListener('submit', (e) => submitPayrollAdjustment(e, refreshAll));
   if (dom.payrollAdjustmentResetBtn) dom.payrollAdjustmentResetBtn.addEventListener('click', resetPayrollAdjustmentForm);
   if (dom.budgetForm) dom.budgetForm.addEventListener('submit', (e) => submitBudget(e, refreshAll));
-  if (dom.financeRangeFilter) dom.financeRangeFilter.addEventListener('change', renderFinance);
   
   // Debounced search filters
   if (dom.payrollAdjustmentSearch) dom.payrollAdjustmentSearch.addEventListener('input', debounce(renderPayrollAdjustments, 150));
@@ -520,6 +601,31 @@ function bindEvents() {
   if (dom.exportAttendanceCsvBtn) dom.exportAttendanceCsvBtn.addEventListener('click', () => exportAttendanceCsv(isLate, getAttendancePenalty));
   if (dom.exportSupervisorsCsvBtn) dom.exportSupervisorsCsvBtn.addEventListener('click', exportSupervisorsCsv);
 
+  if (dom.purgeHistoricalDataBtn) {
+    dom.purgeHistoricalDataBtn.addEventListener('click', async () => {
+      const isOpsManager = state.session?.role === 'admin' || state.session?.role === 'ops_manager';
+      if (!isOpsManager) {
+        showToast('Permission denied: Only the Operations Manager can purge historical data.', 'danger');
+        return;
+      }
+      if (!confirm('PERMANENT ACTION: Are you sure you want to delete all historical attendance, task, report, and financial records before today from both Firestore and local database?')) {
+        return;
+      }
+      showAppLoading('Purging historical records before today...', 'Updating Firestore cloud...');
+      try {
+        state.db = purgeHistoricalDataBeforeToday(state.db);
+        await saveDatabase(state.db);
+        refreshAll();
+        showToast('All records prior to today have been permanently deleted from Firestore and local storage.', 'success');
+      } catch (err) {
+        console.error('Failed to purge historical data:', err);
+        showToast('Error purging data from cloud.', 'danger');
+      } finally {
+        hideAppLoading(300);
+      }
+    });
+  }
+
   // Role Switcher Click Handling
   const roleSwitcher = document.getElementById('demoRoleSwitcher');
   if (roleSwitcher) {
@@ -544,8 +650,10 @@ function bindEvents() {
 }
 
 function bootApp() {
-  if (dom.authShell) dom.authShell.classList.add('d-none');
-  if (dom.appShell) dom.appShell.classList.remove('d-none');
+  const authShell = dom.authShell || document.getElementById('authShell');
+  const appShell = dom.appShell || document.getElementById('appShell');
+  if (authShell) authShell.classList.add('d-none');
+  if (appShell) appShell.classList.remove('d-none');
   if (dom.attendanceDate) dom.attendanceDate.value = todayISO(0);
   if (dom.incomeDate) dom.incomeDate.value = todayISO(0);
   if (dom.payrollAdjustmentDate) dom.payrollAdjustmentDate.value = todayISO(0);
@@ -561,6 +669,13 @@ function bootApp() {
 
 async function init() {
   cacheDom();
+  try {
+    bindEvents();
+    populatePayrollPeriodFilter();
+  } catch (evtErr) {
+    console.warn('Event binding warning:', evtErr);
+  }
+
   try {
     setupLiveClock(updateCountdownDisplays);
   } catch (clockErr) {
@@ -599,13 +714,6 @@ async function init() {
     }
   } catch (migErr) {
     console.warn('Migration non-critical warning:', migErr);
-  }
-
-  try {
-    bindEvents();
-    populatePayrollPeriodFilter();
-  } catch (evtErr) {
-    console.warn('Event binding warning:', evtErr);
   }
 
   if (state.session) {

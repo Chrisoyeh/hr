@@ -71,8 +71,7 @@ export function getEmployeeCarryForward(employeeId, periodKey) {
   return balance < 0 ? Math.abs(balance) : 0;
 }
 
-export function getStaffDeductionRows(employeeId) {
-  const periodKey = getCurrentPayrollPeriodKey();
+export function getStaffDeductionRows(employeeId, periodKey = getCurrentPayrollPeriodKey()) {
   const rows = [];
 
   const monthAttendance = (state.db?.attendance || []).filter((entry) => entry.employeeId === employeeId && entry.date.startsWith(periodKey));
@@ -215,19 +214,27 @@ export function renderPayrollAdjustments() {
     const payment = getPayrollPayment(employee.id, payrollPeriodKey);
     return `
       <tr>
-        <td>${employee.fullName}</td>
+        <td>
+          <div class="fw-semibold">${employee.fullName}</div>
+          <small class="text-muted">${employee.id} · ${employee.department || 'Staff'}</small>
+        </td>
         <td>${payrollPeriodLabel}</td>
         <td class="text-end">${formatCurrency(summary.originalSalary)}</td>
-        <td class="text-end">${formatCurrency(summary.bonus)}</td>
-        <td class="text-end">${formatCurrency(summary.loanAndAdvance)}</td>
-        <td class="text-end">${formatCurrency(summary.otherDeductions)}${summary.carryIn > 0 ? `<div class="small text-muted">+ carry ${formatCurrency(summary.carryIn)}</div>` : ''}</td>
-        <td class="text-end fw-bold">${formatCurrency(summary.finalSalary)}</td>
+        <td class="text-end text-success">${summary.bonus > 0 ? `+${formatCurrency(summary.bonus)}` : '₦0'}</td>
+        <td class="text-end text-warning">${summary.loanAndAdvance > 0 ? `-${formatCurrency(summary.loanAndAdvance)}` : '₦0'}</td>
+        <td class="text-end text-danger">${summary.otherDeductions > 0 ? `-${formatCurrency(summary.otherDeductions)}` : '₦0'}${summary.carryIn > 0 ? `<div class="small text-muted">+ carry ${formatCurrency(summary.carryIn)}</div>` : ''}</td>
+        <td class="text-end fw-bold fs-6 text-light">${formatCurrency(summary.finalSalary)}</td>
         <td class="text-end">${formatCurrency(summary.carryForward)}</td>
         <td>${payment?.paid ? `<span class="chip chip-success">Paid</span><div class="small text-muted mt-1">${formatDate(payment.paidAt)}</div>` : '<span class="chip chip-danger">Pending</span>'}${summary.carryForward > 0 ? `<div class="small text-muted mt-1">Carry forward: ${formatCurrency(summary.carryForward)}</div>` : ''}</td>
-        <td>
-          <button class="btn btn-sm ${payment?.paid ? 'btn-soft' : 'btn-primary'}" data-action="toggle-payroll-payment" data-employee-id="${employee.id}" data-period-key="${payrollPeriodKey}" data-paid="${payment?.paid ? 'true' : 'false'}">
-            ${payment?.paid ? `Mark ${payrollPeriodLabel} Unpaid` : `Mark ${payrollPeriodLabel} Paid`}
-          </button>
+        <td class="text-end">
+          <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-info" data-action="view-employee-payslip" data-employee-id="${employee.id}" data-period-key="${payrollPeriodKey}" title="View & Print Payslip">
+              <i class="bi bi-receipt"></i> Payslip
+            </button>
+            <button class="btn ${payment?.paid ? 'btn-soft' : 'btn-primary'}" data-action="toggle-payroll-payment" data-employee-id="${employee.id}" data-period-key="${payrollPeriodKey}" data-paid="${payment?.paid ? 'true' : 'false'}">
+              ${payment?.paid ? `Unmark` : `Mark Paid`}
+            </button>
+          </div>
         </td>
       </tr>`;
   }).join('');
@@ -235,6 +242,50 @@ export function renderPayrollAdjustments() {
   if (dom.payrollSummaryTableBody) {
     dom.payrollSummaryTableBody.innerHTML = summaryRows || '<tr><td colspan="10" class="text-center text-muted py-4">No employees found</td></tr>';
   }
+}
+
+export async function reconcilePayrollWithFinance(refreshAll) {
+  const periodKey = getSelectedPayrollPeriodKey();
+  const periodLabel = getPayrollPeriodLabel(periodKey);
+  const totals = getPayrollTotals(periodKey);
+
+  if (totals.salaryActual <= 0) {
+    showToast(`No salary disbursements recorded for ${periodLabel}.`, 'warning');
+    return;
+  }
+
+  if (!state.db.financeTransactions) state.db.financeTransactions = [];
+  const existingIndex = state.db.financeTransactions.findIndex(
+    t => t.category === 'Payroll' && String(t.referenceNo || '').includes(periodKey)
+  );
+
+  const txnData = {
+    id: existingIndex >= 0 ? state.db.financeTransactions[existingIndex].id : crypto.randomUUID(),
+    txnRef: existingIndex >= 0 ? state.db.financeTransactions[existingIndex].txnRef : `TXN-${periodKey.replace('-', '')}-PAY`,
+    type: 'Expense',
+    category: 'Payroll',
+    department: 'Admin',
+    amount: totals.salaryActual,
+    date: todayISO(0),
+    description: `Disbursed Staff Payroll for ${periodLabel} (${state.db?.employees?.length || 0} employees)`,
+    paymentMethod: 'Bank Transfer',
+    status: 'Completed',
+    referenceNo: `PAYROLL-${periodKey}`,
+    payeePayer: 'HLTS Staff Roster',
+    createdAt: new Date().toISOString(),
+    createdBy: state.session?.email || 'admin'
+  };
+
+  if (existingIndex >= 0) {
+    state.db.financeTransactions[existingIndex] = txnData;
+    showToast(`Finance Ledger updated for ${periodLabel} Payroll (${formatCurrency(totals.salaryActual)}).`, 'success');
+  } else {
+    state.db.financeTransactions.push(txnData);
+    showToast(`Disbursed Payroll (${formatCurrency(totals.salaryActual)}) posted to Finance Ledger!`, 'success');
+  }
+
+  await saveDatabase();
+  if (typeof refreshAll === 'function') refreshAll();
 }
 
 export function resetPayrollAdjustmentForm() {
@@ -246,7 +297,7 @@ export function resetPayrollAdjustmentForm() {
   if (dom.payrollAdjustmentSubmitBtn) dom.payrollAdjustmentSubmitBtn.textContent = 'Save Adjustment';
 }
 
-export function submitPayrollAdjustment(event, refreshAll) {
+export async function submitPayrollAdjustment(event, refreshAll) {
   event.preventDefault();
   const empId = dom.payrollAdjustmentEmployee?.value;
   if (!empId) {
@@ -273,12 +324,12 @@ export function submitPayrollAdjustment(event, refreshAll) {
     showToast('Payroll adjustment saved.', 'success');
   }
 
-  saveDatabase();
+  await saveDatabase();
   resetPayrollAdjustmentForm();
   if (typeof refreshAll === 'function') refreshAll();
 }
 
-export function batchMarkAllPayrollPaid(refreshAll) {
+export async function batchMarkAllPayrollPaid(refreshAll) {
   const periodKey = getSelectedPayrollPeriodKey();
   const periodLabel = getPayrollPeriodLabel(periodKey);
   const activeEmps = (state.db?.employees || []).filter((e) => e.active !== false);
@@ -295,23 +346,29 @@ export function batchMarkAllPayrollPaid(refreshAll) {
     setPayrollPayment(emp.id, periodKey, true);
   });
 
-  saveDatabase();
+  await saveDatabase();
   showToast(`Successfully marked ${unpaid.length} staff paid for ${periodLabel}.`, 'success');
   if (typeof refreshAll === 'function') refreshAll();
 }
 
-export function openStaffPaySlipModal() {
-  const employee = getCurrentEmployee();
+export function openStaffPaySlipModal(targetEmployeeId, targetPeriodKey) {
+  let employee = null;
+  if (typeof targetEmployeeId === 'string') {
+    employee = (state.db?.employees || []).find(e => e.id === targetEmployeeId);
+  } else {
+    employee = getCurrentEmployee();
+  }
+
   if (!employee) {
-    showToast('No staff profile found.', 'danger');
+    showToast('No employee record found for payslip.', 'danger');
     return;
   }
 
-  const periodKey = getCurrentPayrollPeriodKey();
+  const periodKey = typeof targetPeriodKey === 'string' ? targetPeriodKey : getSelectedPayrollPeriodKey();
   const periodLabel = getPayrollPeriodLabel(periodKey);
   const payroll = getEmployeeDeductions(employee.id, periodKey);
   const payment = getPayrollPayment(employee.id, periodKey);
-  const deductions = getStaffDeductionRows(employee.id);
+  const deductions = getStaffDeductionRows(employee.id, periodKey);
   const office = (state.db?.offices || []).find((o) => o.id === employee.officeId) || { name: 'Headquarters' };
 
   const avatarHtml = employee.avatar 

@@ -123,6 +123,9 @@ export function renderDashboard() {
   const activeEmployees = (state.db?.employees || []).filter((e) => isEmployeeActive(e));
   const todayAttendance = getTodayAttendance();
   const presentCount = todayAttendance.filter((e) => e.status === 'Present').length;
+  const absentCount = todayAttendance.filter((e) => e.status === 'Absent').length;
+  const loggedCount = presentCount + absentCount;
+  const awaitingCount = Math.max(0, activeEmployees.length - loggedCount);
   const urgentIssues = (state.db?.managementIssues || []).filter((i) => i.status === 'urgent');
 
   if (dom.presentTodayCard) dom.presentTodayCard.textContent = `${presentCount} / ${activeEmployees.length}`;
@@ -140,14 +143,14 @@ export function renderDashboard() {
     return {
       name: sch.code || sch.name.slice(0, 14),
       fullName: sch.name,
-      curriculumPace: latestRep?.curriculumActual || 75,
-      lessonCompliance: latestRep?.lessonNoteCompliance || 80,
-      cbtCompleted: latestRep?.assessmentCompleted === 'Yes' ? 100 : (latestRep?.assessmentCompleted === 'Partially' ? 50 : 20),
-      cbtScores: latestRep?.scoresSubmitted === 'Yes' ? 100 : (latestRep?.scoresSubmitted === 'Partially' ? 50 : 10),
-      satisfaction: (latestRep?.satisfactionRating || 4) * 20,
-      resultProgress: latestRep?.resultProgress || 70,
-      teacherCompliance: latestRep?.teacherCompliance || 80,
-      labStatus: latestRep?.labStatus === 'Resolved / All Functional' ? 'Good' : 'Faulty'
+      curriculumPace: latestRep?.curriculumActual || 0,
+      lessonCompliance: latestRep?.lessonNoteCompliance || 0,
+      cbtCompleted: latestRep?.assessmentCompleted === 'Yes' ? 100 : (latestRep?.assessmentCompleted === 'Partially' ? 50 : 0),
+      cbtScores: latestRep?.scoresSubmitted === 'Yes' ? 100 : (latestRep?.scoresSubmitted === 'Partially' ? 50 : 0),
+      satisfaction: latestRep?.satisfactionRating ? Number(latestRep.satisfactionRating) * 20 : 0,
+      resultProgress: latestRep?.resultProgress || 0,
+      teacherCompliance: latestRep?.teacherCompliance || 0,
+      labStatus: latestRep?.labStatus === 'Resolved / All Functional' ? 'Good' : (latestRep?.labStatus ? 'Faulty' : '—')
     };
   });
 
@@ -162,13 +165,13 @@ export function renderDashboard() {
   if (dom.activeDevProjectsCard) dom.activeDevProjectsCard.textContent = activeDevProjects.length;
 
   // 1. Staff Attendance Doughnut
-  updateChart('attendanceRatioChart', {
+  updateChart('attendanceChart', {
     type: 'doughnut',
     data: {
-      labels: ['Present Today', 'Absent / Pending'],
+      labels: ['Present Today', 'Logged Absent', 'Awaiting Sign-in'],
       datasets: [{
-        data: [presentCount, Math.max(0, activeEmployees.length - presentCount)],
-        backgroundColor: ['#10b981', '#ef4444'],
+        data: [presentCount, absentCount, awaitingCount],
+        backgroundColor: ['#10b981', '#ef4444', '#64748b'],
         borderWidth: 0
       }]
     },
@@ -176,7 +179,7 @@ export function renderDashboard() {
   });
 
   // 2. Curriculum Pace (Bar)
-  updateChart('curriculumPaceChart', {
+  updateChart('curriculumChart', {
     type: 'bar',
     data: {
       labels: schoolMetrics.length ? schoolMetrics.map(s => s.name) : ['No School Records'],
@@ -191,7 +194,7 @@ export function renderDashboard() {
   });
 
   // 3. Lesson Note Compliance (Bar)
-  updateChart('lessonNoteComplianceChart', {
+  updateChart('lessonComplianceChart', {
     type: 'bar',
     data: {
       labels: schoolMetrics.length ? schoolMetrics.map(s => s.name) : ['No School Records'],
@@ -252,8 +255,8 @@ export function renderDashboard() {
 
   // 7. Developer Projects Velocity (Horizontal Bar)
   const projLabels = allProjects.map(p => p.name.slice(0, 16));
-  const projProgress = allProjects.map(p => p.completionPct);
-  updateChart('devVelocityChart', {
+  const projProgress = allProjects.map(p => p.completionPct || 0);
+  updateChart('devProjectsChart', {
     type: 'bar',
     data: {
       labels: projLabels.length ? projLabels : ['No Active Projects'],
@@ -274,13 +277,13 @@ export function renderDashboard() {
   const welfareReps = state.db?.reportsWelfare || [];
   const latestWelfare = welfareReps.sort((a,b) => String(b.date).localeCompare(String(a.date)))[0];
   const staffPerfs = latestWelfare?.staffPerformances || [];
-  updateChart('staffPerformanceChart', {
+  updateChart('schoolHealthChart', {
     type: 'bar',
     data: {
       labels: staffPerfs.length ? staffPerfs.map(s => s.name.split(' ')[0]) : ['No Evaluations Logged'],
       datasets: [{
         label: 'Weekly Rating %',
-        data: staffPerfs.length ? staffPerfs.map(s => s.performancePct) : [0],
+        data: staffPerfs.length ? staffPerfs.map(s => s.performancePct || 0) : [0],
         backgroundColor: '#10b981',
         borderRadius: 6
       }]

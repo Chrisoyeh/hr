@@ -102,7 +102,7 @@ export function renderWelfareHrView() {
   }
 }
 
-export function submitWelfareReport(event, refreshAll) {
+export async function submitWelfareReport(event, refreshAll) {
   event.preventDefault();
   const id = dom.welfareReportId?.value || `wrep-${crypto.randomUUID()}`;
 
@@ -156,7 +156,7 @@ export function submitWelfareReport(event, refreshAll) {
     state.db.reportsWelfare.push(report);
   }
 
-  saveDatabase();
+  await saveDatabase();
   resetWelfareReportForm();
   showToast('Welfare & HR weekly report submitted successfully.', 'success');
   if (typeof refreshAll === 'function') refreshAll();
@@ -170,11 +170,11 @@ export function resetWelfareReportForm() {
   if (dom.welfareGeneralNotes) dom.welfareGeneralNotes.value = '';
 }
 
-export function toggleQAStatus(id, refreshAll) {
+export async function toggleQAStatus(id, refreshAll) {
   const item = (state.db?.staffAppraisalsQueries || []).find(q => q.id === id);
   if (!item) return;
   item.status = item.status === 'Resolved' ? 'Open' : 'Resolved';
-  saveDatabase();
+  await saveDatabase();
   showToast(`Record status marked as ${item.status}.`, 'info');
   if (typeof refreshAll === 'function') refreshAll();
 }

@@ -88,3 +88,46 @@ export function exportSupervisorsCsv() {
   downloadFile(csv, `HLTS_Supervisor_Reports_${todayISO(0)}.csv`, 'text/csv');
   showToast('Supervisor reports CSV exported.', 'success');
 }
+
+export function exportFinanceLedgerCsv() {
+  const headers = ['Txn Ref', 'Date', 'Type', 'Category', 'Department', 'Amount (NGN)', 'Payment Method', 'Status', 'Reference / Invoice No', 'Payee / Payer', 'Description'];
+  const txns = [...(state.db?.financeTransactions || [])].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  
+  const rows = txns.map(t => [
+    `"${t.txnRef || ''}"`,
+    `"${t.date || ''}"`,
+    `"${t.type || 'Expense'}"`,
+    `"${(t.category || '').replace(/"/g, '""')}"`,
+    `"${(t.department || 'General').replace(/"/g, '""')}"`,
+    Number(t.amount || 0),
+    `"${(t.paymentMethod || 'Bank Transfer').replace(/"/g, '""')}"`,
+    `"${(t.status || 'Completed').replace(/"/g, '""')}"`,
+    `"${(t.referenceNo || '').replace(/"/g, '""')}"`,
+    `"${(t.payeePayer || '').replace(/"/g, '""')}"`,
+    `"${(t.description || '').replace(/"/g, '""')}"`
+  ].join(','));
+
+  const csv = [headers.join(','), ...rows].join('\n');
+  downloadFile(csv, `HLTS_General_Ledger_${todayISO(0)}.csv`, 'text/csv');
+  showToast('Finance General Ledger CSV exported.', 'success');
+}
+
+export function exportInvoicesCsv() {
+  const headers = ['Invoice Number', 'Client School', 'Issue Date', 'Due Date', 'Amount (NGN)', 'Status', 'Description'];
+  const invoices = [...(state.db?.clientInvoices || [])].sort((a, b) => String(b.issueDate).localeCompare(String(a.issueDate)));
+
+  const rows = invoices.map(i => [
+    `"${i.invoiceNumber || ''}"`,
+    `"${(i.schoolName || '').replace(/"/g, '""')}"`,
+    `"${i.issueDate || ''}"`,
+    `"${i.dueDate || ''}"`,
+    Number(i.amount || 0),
+    `"${(i.status || 'Sent').replace(/"/g, '""')}"`,
+    `"${(i.description || '').replace(/"/g, '""')}"`
+  ].join(','));
+
+  const csv = [headers.join(','), ...rows].join('\n');
+  downloadFile(csv, `HLTS_Client_Invoices_${todayISO(0)}.csv`, 'text/csv');
+  showToast('Client Invoices CSV exported.', 'success');
+}
+

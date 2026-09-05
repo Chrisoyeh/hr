@@ -1214,4 +1214,76 @@ canvas {
   align-items: center;
   justify-content: center;
 }
+
+/* ── Financial Engine & Invoicing Styles ── */
+.printable-invoice,
+.payslip-print-sheet {
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 12px;
+}
+
+.transaction-detail-card {
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 12px;
+}
+
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  #staffPaySlipModal.show .modal-dialog,
+  #staffPaySlipModal.show .modal-content,
+  #staffPaySlipModal.show .modal-body,
+  #staffPaySlipModal.show .modal-body *,
+  #invoicePrintModal.show .modal-dialog,
+  #invoicePrintModal.show .modal-content,
+  #invoicePrintModal.show .modal-body,
+  #invoicePrintModal.show .modal-body * {
+    visibility: visible !important;
+  }
+  #staffPaySlipModal, #invoicePrintModal {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+  .modal-dialog {
+    max-width: 100% !important;
+    margin: 0 !important;
+  }
+  .modal-header, .modal-footer, .btn-close {
+    display: none !important;
+  }
+  .modal-content {
+    border: none !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+  .printable-invoice, .payslip-print-sheet {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+  .table {
+    color: #000000 !important;
+    border-color: #dee2e6 !important;
+  }
+  .table-dark {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+  }
+  .text-white, .text-light, .text-white-50 {
+    color: #000000 !important;
+  }
+  .bg-dark, .bg-secondary {
+    background-color: #f8f9fa !important;
+    color: #000000 !important;
+  }
+}
+
 

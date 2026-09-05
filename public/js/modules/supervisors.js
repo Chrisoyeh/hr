@@ -179,7 +179,7 @@ export function renderSupervisorsView() {
   `).join('');
 }
 
-export function submitSupervisorReport(event, refreshAll) {
+export async function submitSupervisorReport(event, refreshAll) {
   event.preventDefault();
   const isOpsManager = state.session?.role === 'admin' || state.session?.role === 'ops_manager' || state.session?.actualRole === 'admin' || state.session?.actualRole === 'ops_manager';
   const schoolId = dom.supReportSchool?.value;
@@ -263,7 +263,7 @@ export function submitSupervisorReport(event, refreshAll) {
     });
   }
 
-  saveDatabase();
+  await saveDatabase();
   resetSupervisorReportForm();
   showToast(`Weekly academic report for ${school.name} submitted successfully.`, 'success');
   if (typeof refreshAll === 'function') refreshAll();

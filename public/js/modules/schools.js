@@ -112,7 +112,7 @@ export function renderSchoolsView() {
   }).join('');
 }
 
-export function upsertSchool(event, refreshAll) {
+export async function upsertSchool(event, refreshAll) {
   event.preventDefault();
   const isOpsManager = state.session?.role === 'admin' || state.session?.role === 'ops_manager' || state.session?.actualRole === 'admin' || state.session?.actualRole === 'ops_manager';
   if (!isOpsManager) {
@@ -141,7 +141,7 @@ export function upsertSchool(event, refreshAll) {
     showToast('School added successfully.', 'success');
   }
 
-  saveDatabase();
+  await saveDatabase();
   resetSchoolForm();
   if (typeof refreshAll === 'function') refreshAll();
 }
@@ -153,7 +153,7 @@ export function resetSchoolForm() {
   if (dom.schoolSubmitBtn) dom.schoolSubmitBtn.textContent = 'Save School';
 }
 
-export function deleteSchool(id, refreshAll) {
+export async function deleteSchool(id, refreshAll) {
   const isOpsManager = state.session?.role === 'admin' || state.session?.role === 'ops_manager' || state.session?.actualRole === 'admin' || state.session?.actualRole === 'ops_manager';
   if (!isOpsManager) {
     showToast('Permission denied: Only the Operations Manager can delete schools.', 'danger');
@@ -162,7 +162,7 @@ export function deleteSchool(id, refreshAll) {
 
   if (!confirm('Are you sure you want to delete this school registry entry?')) return;
   state.db.schools = (state.db?.schools || []).filter(s => s.id !== id);
-  saveDatabase();
+  await saveDatabase();
   showToast('School deleted.', 'success');
   if (typeof refreshAll === 'function') refreshAll();
 }

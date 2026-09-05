@@ -1,5 +1,5 @@
 import { dom } from './dom.js';
-import { state, isEmployeeActive, getPayrollPayment, getCurrentPayrollPeriodKey, getPayrollPeriodLabel, getLatestEmployeeId } from '../state.js';
+import { state, saveSession, isEmployeeActive, getPayrollPayment, getCurrentPayrollPeriodKey, getPayrollPeriodLabel, getLatestEmployeeId } from '../state.js';
 import { saveDatabase } from '../services/firestore.js';
 import { formatCurrency, buildEmployeeEmail, buildEmployeeCredentials, hashPassword, getInitials, updateAvatarElement, showToast } from '../utils.js';
 
@@ -75,7 +75,8 @@ export function buildSelectOptions() {
 
 export function resetEmployeeForm() {
   if (dom.employeeForm) dom.employeeForm.reset();
-  if (dom.employeeId) dom.employeeId.value = '';
+  if (dom.employeeOriginalId) dom.employeeOriginalId.value = '';
+  if (dom.employeeId) dom.employeeId.value = getLatestEmployeeId();
   if (dom.employeeEmail) dom.employeeEmail.value = '';
   if (dom.employeeAvatarData) dom.employeeAvatarData.value = '';
   if (dom.employeeFormAvatarPreview) {
@@ -92,8 +93,25 @@ export function resetEmployeeForm() {
 
 export async function upsertEmployee(event, refreshAll) {
   event.preventDefault();
-  const id = dom.employeeId.value || getLatestEmployeeId();
-  const existingEmployee = (state.db?.employees || []).find((item) => item.id === id) || null;
+  const originalId = (dom.employeeOriginalId?.value || '').trim();
+  const id = (dom.employeeId?.value || '').trim() || originalId || getLatestEmployeeId();
+
+  if (!id) {
+    showToast('Employee ID is required.', 'warning');
+    return;
+  }
+
+  // Check duplicate ID
+  const isDuplicate = (state.db?.employees || []).some(item => item.id.toLowerCase() === id.toLowerCase() && item.id !== originalId);
+  if (isDuplicate) {
+    showToast(`Employee ID "${id}" is already assigned to another staff member.`, 'danger');
+    return;
+  }
+
+  const existingEmployee = originalId
+    ? (state.db?.employees || []).find((item) => item.id === originalId)
+    : ((state.db?.employees || []).find((item) => item.id === id) || null);
+
   const email = dom.employeeEmail.value.trim().toLowerCase() || existingEmployee?.email || buildEmployeeEmail(dom.employeeName.value.trim(), id);
   const role = dom.employeeRole ? dom.employeeRole.value : (existingEmployee?.role || 'staff');
   const avatar = dom.employeeAvatarData?.value || existingEmployee?.avatar || null;
@@ -147,9 +165,45 @@ export async function upsertEmployee(event, refreshAll) {
   if (!state.db.employees) state.db.employees = [];
   if (!state.db.users) state.db.users = [];
 
-  if (dom.employeeId.value) {
-    state.db.employees = state.db.employees.map((item) => item.id === id ? employee : item);
-    state.db.users = state.db.users.map((item) => (item.employeeId === id || item.email === employee.email) ? { ...item, ...userRecord } : item);
+  if (originalId) {
+    state.db.employees = state.db.employees.map((item) => item.id === originalId ? employee : item);
+    state.db.users = state.db.users.map((item) => {
+      if (item.employeeId === originalId || item.email === (existingEmployee?.email || employee.email)) {
+        return { ...item, ...userRecord, employeeId: id };
+      }
+      return item;
+    });
+
+    // Cascade update if ID was modified
+    if (originalId !== id) {
+      if (state.db.attendance) {
+        state.db.attendance = state.db.attendance.map(a => a.employeeId === originalId ? { ...a, employeeId: id } : a);
+      }
+      if (state.db.tasks) {
+        state.db.tasks = state.db.tasks.map(t => ({
+          ...t,
+          employeeId: t.employeeId === originalId ? id : t.employeeId,
+          createdBy: t.createdBy === originalId ? id : t.createdBy
+        }));
+      }
+      if (state.db.payrollAdjustments) {
+        state.db.payrollAdjustments = state.db.payrollAdjustments.map(p => p.employeeId === originalId ? { ...p, employeeId: id } : p);
+      }
+      if (state.db.staffAppraisalsQueries) {
+        state.db.staffAppraisalsQueries = state.db.staffAppraisalsQueries.map(q => q.employeeId === originalId ? { ...q, employeeId: id } : q);
+      }
+      if (state.db.missingReportPenalties) {
+        state.db.missingReportPenalties = state.db.missingReportPenalties.map(m => m.employeeId === originalId ? { ...m, employeeId: id } : m);
+      }
+      if (state.db.schools) {
+        state.db.schools = state.db.schools.map(s => s.supervisorId === originalId ? { ...s, supervisorId: id } : s);
+      }
+      if (state.session?.employeeId === originalId) {
+        state.session.employeeId = id;
+        saveSession(state.session);
+      }
+    }
+
     showToast('Employee updated successfully.', 'success');
   } else {
     state.db.employees.push({ ...employee, createdAt: new Date().toISOString() });
@@ -162,7 +216,7 @@ export async function upsertEmployee(event, refreshAll) {
     showToast('Employee added successfully.', 'success');
   }
 
-  saveDatabase();
+  await saveDatabase();
   resetEmployeeForm();
   if (dom.employeeCredentialBox) {
     dom.employeeCredentialBox.classList.remove('d-none');

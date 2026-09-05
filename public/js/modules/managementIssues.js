@@ -81,7 +81,7 @@ export function openManagementIssueModal(issueId) {
   }
 }
 
-export function saveManagementIssue(refreshAll) {
+export async function saveManagementIssue(refreshAll) {
   const id = dom.modalIssueId?.value;
   const issue = (state.db?.managementIssues || []).find(i => i.id === id);
   if (!issue) return;
@@ -90,7 +90,7 @@ export function saveManagementIssue(refreshAll) {
   issue.opsNotes = dom.modalIssueNotes?.value.trim() || '';
   issue.updatedAt = new Date().toISOString();
 
-  saveDatabase();
+  await saveDatabase();
 
   const modalEl = document.getElementById('managementIssueModal');
   if (modalEl) {

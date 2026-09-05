@@ -514,10 +514,16 @@
                   </div>
                 </div>
                 <form id="employeeForm" class="stack-form">
-                  <input type="hidden" id="employeeId">
-                  <div>
-                    <label class="form-label">Full Name</label>
-                    <input class="form-control" id="employeeName" required>
+                  <input type="hidden" id="employeeOriginalId">
+                  <div class="row g-3">
+                    <div class="col-12 col-sm-4">
+                      <label class="form-label">Staff ID</label>
+                      <input class="form-control" id="employeeId" placeholder="EMP-1001" required>
+                    </div>
+                    <div class="col-12 col-sm-8">
+                      <label class="form-label">Full Name</label>
+                      <input class="form-control" id="employeeName" placeholder="Full Name" required>
+                    </div>
                   </div>
                   <div>
                     <label class="form-label">Email</label>
@@ -1300,73 +1306,324 @@
 
 
         <section class="view-panel" id="financeView">
-          <div class="row g-4">
-            <div class="col-12 col-xl-4">
-              <div class="panel-card">
-                <div class="panel-header">
-                  <div>
-                    <h3>Income Entry</h3>
-                    <p>Record revenue and expenses.</p>
-                  </div>
-                </div>
-                <form id="incomeForm" class="stack-form">
-                  <div>
-                    <label class="form-label">Type</label>
-                    <select class="form-select" id="incomeType" required>
-                      <option value="Revenue">Revenue</option>
-                      <option value="Expense">Expense</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label class="form-label">Category</label>
-                    <input class="form-control" id="incomeCategory" placeholder="Payroll / Ops / Sales" required>
-                  </div>
-                  <div>
-                    <label class="form-label">Amount (NGN)</label>
-                    <input class="form-control" id="incomeAmount" type="number" min="0" step="1" required>
-                  </div>
-                  <div>
-                    <label class="form-label">Date</label>
-                    <input class="form-control" id="incomeDate" type="date" required>
-                  </div>
-                  <div>
-                    <label class="form-label">Description</label>
-                    <textarea class="form-control" id="incomeDescription" rows="3"></textarea>
-                  </div>
-                  <button class="btn btn-primary" type="submit">Save Entry</button>
-                </form>
+          <!-- Executive Financial Intelligence KPIs -->
+          <div class="row g-3 mb-4 row-cols-1 row-cols-sm-2 row-cols-lg-5">
+            <div class="col">
+              <div class="summary-card p-3">
+                <span class="text-muted small text-uppercase fw-semibold">Gross Revenue</span>
+                <strong class="fs-4 text-success" id="revenueMetric">₦0</strong>
+                <small class="text-muted">Paid client retainers & income</small>
               </div>
             </div>
+            <div class="col">
+              <div class="summary-card p-3">
+                <span class="text-muted small text-uppercase fw-semibold">Operating Expenses</span>
+                <strong class="fs-4 text-danger" id="expensesMetric">₦0</strong>
+                <small class="text-muted">Payroll, tech & logistics</small>
+              </div>
+            </div>
+            <div class="col">
+              <div class="summary-card p-3">
+                <span class="text-muted small text-uppercase fw-semibold">Net Profit / Loss</span>
+                <strong class="fs-4 text-white" id="profitMetric">₦0</strong>
+                <small class="text-muted">Net Operating Surplus</small>
+              </div>
+            </div>
+            <div class="col">
+              <div class="summary-card p-3">
+                <span class="text-muted small text-uppercase fw-semibold">Operating Margin</span>
+                <strong class="fs-4 text-info" id="financeMarginMetric">0%</strong>
+                <small class="text-muted">Profit Margin %</small>
+              </div>
+            </div>
+            <div class="col">
+              <div class="summary-card p-3">
+                <span class="text-muted small text-uppercase fw-semibold">Pending Txns</span>
+                <strong class="fs-4 text-warning" id="pendingTxnsMetric">₦0</strong>
+                <small class="text-muted">Unsettled / Pending Amount</small>
+              </div>
+            </div>
+          </div>
+
+          <!-- Financial Analytics Visualizations -->
+          <div class="row g-4 mb-4">
             <div class="col-12 col-xl-8">
-              <div class="panel-card mb-4">
-                <div class="panel-header flex-column flex-md-row align-items-md-center gap-3">
+              <div class="panel-card compact-chart-card h-100">
+                <div class="panel-header">
                   <div>
-                    <h3>Income Table</h3>
-                    <p>Revenue, expenses, and profitability.</p>
-                  </div>
-                  <div class="ms-md-auto d-flex gap-2 flex-wrap">
-                    <select class="form-select form-select-sm filter-select" id="financeRangeFilter">
-                      <option value="monthly">Monthly</option>
-                      <option value="fourMonths">Every 4 Months</option>
-                      <option value="yearly">Yearly</option>
-                    </select>
+                    <h3>Cash Flow Trend (6-Month Horizon)</h3>
+                    <p>Monthly revenue inflows vs operational expense outflows.</p>
                   </div>
                 </div>
-                <div class="table-responsive">
-                  <table class="table align-middle table-hover data-table">
-                    <thead>
-                      <tr>
-                        <th>Date</th><th>Type</th><th>Category</th><th>Description</th><th class="text-end">Amount</th><th></th>
-                      </tr>
-                    </thead>
-                    <tbody id="incomeTableBody"></tbody>
-                  </table>
+                <div class="compact-chart-wrap" style="height: 220px;">
+                  <canvas id="financeCashFlowChart"></canvas>
                 </div>
               </div>
+            </div>
+            <div class="col-12 col-xl-4">
+              <div class="panel-card compact-chart-card h-100">
+                <div class="panel-header">
+                  <div>
+                    <h3>Expenses by Department</h3>
+                    <p>Operational cost allocation by office.</p>
+                  </div>
+                </div>
+                <div class="compact-chart-wrap" style="height: 220px;">
+                  <canvas id="financeDeptExpenseChart"></canvas>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Finance Tabs: Ledger vs Invoicing -->
+          <ul class="nav nav-pills mb-4 gap-2" id="financeSubTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+              <button class="nav-link active rounded-pill px-4" id="ledger-tab" data-bs-toggle="pill" data-bs-target="#ledgerSubTab" type="button" role="tab"><i class="bi bi-journal-text me-2"></i>General Ledger</button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link rounded-pill px-4" id="invoices-tab" data-bs-toggle="pill" data-bs-target="#invoicesSubTab" type="button" role="tab"><i class="bi bi-receipt me-2"></i>Client Invoicing & Receivables</button>
+            </li>
+          </ul>
+
+          <div class="tab-content" id="financeSubTabsContent">
+            <!-- Subtab 1: General Ledger -->
+            <div class="tab-pane fade show active" id="ledgerSubTab" role="tabpanel">
               <div class="row g-4">
-                <div class="col-12 col-md-4"><div class="mini-metric"><span>Revenue</span><strong id="revenueMetric">NGN 0</strong></div></div>
-                <div class="col-12 col-md-4"><div class="mini-metric"><span>Expenses</span><strong id="expensesMetric">NGN 0</strong></div></div>
-                <div class="col-12 col-md-4"><div class="mini-metric"><span>Profit / Loss</span><strong id="profitMetric">NGN 0</strong></div></div>
+                <div class="col-12 col-xl-4">
+                  <div class="panel-card">
+                    <div class="panel-header">
+                      <div>
+                        <h3 id="incomeFormTitle">Record Financial Transaction</h3>
+                        <p>Book revenue, operations expense, or asset purchases.</p>
+                      </div>
+                    </div>
+                    <form id="incomeForm" class="stack-form">
+                      <input type="hidden" id="incomeId">
+                      <div class="row g-2">
+                        <div class="col-6">
+                          <label class="form-label">Type</label>
+                          <select class="form-select" id="incomeType" required>
+                            <option value="Revenue">Revenue (Inflow)</option>
+                            <option value="Expense" selected>Expense (Outflow)</option>
+                          </select>
+                        </div>
+                        <div class="col-6">
+                          <label class="form-label">Department</label>
+                          <select class="form-select" id="incomeDepartment" required>
+                            <option value="General">General / All</option>
+                            <option value="Academic">Academic Office</option>
+                            <option value="Developer">Developers Office</option>
+                            <option value="Welfare_HR">Welfare & HR</option>
+                            <option value="Admin">Management & Admin</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div>
+                        <label class="form-label">Category</label>
+                        <input class="form-control" id="incomeCategory" list="financeCategoriesList" placeholder="e.g. School Retainer, Payroll, Server Infrastructure, Welfare" required>
+                        <datalist id="financeCategoriesList">
+                          <option value="School Retainer">
+                          <option value="Software Licensing">
+                          <option value="Payroll">
+                          <option value="Server Infrastructure">
+                          <option value="Academic Materials">
+                          <option value="Staff Welfare & Medical">
+                          <option value="Office Operations & Utilities">
+                          <option value="Hardware & Devices">
+                          <option value="Logistics & Transport">
+                        </datalist>
+                      </div>
+                      <div class="row g-2">
+                        <div class="col-6">
+                          <label class="form-label">Amount (NGN)</label>
+                          <input class="form-control" id="incomeAmount" type="number" min="0" step="1" placeholder="₦0" required>
+                        </div>
+                        <div class="col-6">
+                          <label class="form-label">Date</label>
+                          <input class="form-control" id="incomeDate" type="date" required>
+                        </div>
+                      </div>
+                      <div class="row g-2">
+                        <div class="col-6">
+                          <label class="form-label">Payment Method</label>
+                          <select class="form-select" id="incomePaymentMethod">
+                            <option value="Bank Transfer" selected>Bank Transfer</option>
+                            <option value="Cash">Cash</option>
+                            <option value="Corporate Card">Corporate Card</option>
+                            <option value="Cheque">Cheque</option>
+                          </select>
+                        </div>
+                        <div class="col-6">
+                          <label class="form-label">Status</label>
+                          <select class="form-select" id="incomeStatus">
+                            <option value="Completed" selected>Completed</option>
+                            <option value="Pending">Pending</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div class="row g-2">
+                        <div class="col-6">
+                          <label class="form-label">Payee / Payer</label>
+                          <input class="form-control" id="incomePayeePayer" placeholder="Client, Vendor or Staff">
+                        </div>
+                        <div class="col-6">
+                          <label class="form-label">Reference / Ref No</label>
+                          <input class="form-control" id="incomeReferenceNo" placeholder="Invoice or Transfer Ref">
+                        </div>
+                      </div>
+                      <div>
+                        <label class="form-label">Description & Notes</label>
+                        <textarea class="form-control" id="incomeDescription" rows="2" placeholder="Itemized memo or purpose..."></textarea>
+                      </div>
+                      <div class="d-flex gap-2">
+                        <button class="btn btn-primary flex-fill" type="submit" id="incomeSubmitBtn">Save Transaction</button>
+                        <button class="btn btn-outline-secondary" type="button" id="incomeResetBtn">Reset</button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+                <div class="col-12 col-xl-8">
+                  <div class="panel-card mb-4">
+                    <div class="panel-header flex-column flex-md-row align-items-md-center gap-3">
+                      <div>
+                        <h3>General Ledger</h3>
+                        <p>Complete multi-account financial transaction ledger.</p>
+                      </div>
+                      <div class="ms-md-auto d-flex gap-2 flex-wrap align-items-center">
+                        <select class="form-select form-select-sm filter-select" id="financeRangeFilter" style="width: 130px;">
+                          <option value="monthly">This Month</option>
+                          <option value="lastMonth">Last Month</option>
+                          <option value="quarterly">This Quarter</option>
+                          <option value="fourMonths">4 Months</option>
+                          <option value="yearly">This Year</option>
+                          <option value="all">All Time</option>
+                        </select>
+                        <select class="form-select form-select-sm filter-select" id="financeDeptFilter" style="width: 120px;">
+                          <option value="all">All Depts</option>
+                          <option value="Academic">Academic</option>
+                          <option value="Developer">Developer</option>
+                          <option value="Welfare_HR">Welfare/HR</option>
+                          <option value="Admin">Admin</option>
+                        </select>
+                        <select class="form-select form-select-sm filter-select" id="financeTypeFilter" style="width: 110px;">
+                          <option value="all">All Types</option>
+                          <option value="Revenue">Revenue</option>
+                          <option value="Expense">Expense</option>
+                        </select>
+                        <button class="btn btn-sm btn-outline-light" id="exportFinanceCsvBtn" title="Export Ledger to CSV"><i class="bi bi-download"></i></button>
+                      </div>
+                    </div>
+                    <div class="mb-3">
+                      <input class="form-control form-control-sm" id="financeSearch" placeholder="Search by Txn ID, category, description, payee or reference...">
+                    </div>
+                    <div class="table-responsive">
+                      <table class="table align-middle table-hover data-table">
+                        <thead>
+                          <tr>
+                            <th>Txn ID</th><th>Date</th><th>Type</th><th>Category</th><th>Description & Payee</th><th>Status</th><th class="text-end">Amount</th><th class="text-end"></th>
+                          </tr>
+                        </thead>
+                        <tbody id="incomeTableBody"></tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Subtab 2: Client Invoicing & Receivables -->
+            <div class="tab-pane fade" id="invoicesSubTab" role="tabpanel">
+              <div class="row g-4 mb-4">
+                <div class="col-12 col-md-4"><div class="mini-metric"><span>Total Invoiced</span><strong id="invoicesBilledMetric" class="text-info">₦0</strong></div></div>
+                <div class="col-12 col-md-4"><div class="mini-metric"><span>Settled & Received</span><strong id="invoicesReceivedMetric" class="text-success">₦0</strong></div></div>
+                <div class="col-12 col-md-4"><div class="mini-metric"><span>Outstanding Receivables</span><strong id="invoicesOutstandingMetric" class="text-warning">₦0</strong></div></div>
+              </div>
+
+              <div class="row g-4">
+                <div class="col-12 col-xl-4">
+                  <div class="panel-card">
+                    <div class="panel-header">
+                      <div>
+                        <h3 id="invoiceFormTitle">Create Client Invoice</h3>
+                        <p>Generate billing for client schools and partners.</p>
+                      </div>
+                    </div>
+                    <form id="invoiceForm" class="stack-form">
+                      <input type="hidden" id="invoiceId">
+                      <div>
+                        <label class="form-label">Client School</label>
+                        <select class="form-select" id="invoiceSchoolSelect" required>
+                          <option value="">-- Select Client School --</option>
+                        </select>
+                      </div>
+                      <div class="row g-2">
+                        <div class="col-6">
+                          <label class="form-label">Amount (NGN)</label>
+                          <input class="form-control" id="invoiceAmount" type="number" min="0" step="1" placeholder="₦0" required>
+                        </div>
+                        <div class="col-6">
+                          <label class="form-label">Status</label>
+                          <select class="form-select" id="invoiceStatus">
+                            <option value="Sent" selected>Sent</option>
+                            <option value="Draft">Draft</option>
+                            <option value="Paid">Paid</option>
+                            <option value="Overdue">Overdue</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div class="row g-2">
+                        <div class="col-6">
+                          <label class="form-label">Issue Date</label>
+                          <input class="form-control" id="invoiceIssueDate" type="date" required>
+                        </div>
+                        <div class="col-6">
+                          <label class="form-label">Due Date</label>
+                          <input class="form-control" id="invoiceDueDate" type="date">
+                        </div>
+                      </div>
+                      <div>
+                        <label class="form-label">Scope / Description</label>
+                        <textarea class="form-control" id="invoiceDescription" rows="3" placeholder="e.g. Term 1 IT Curriculum Retainer, LMS Software License, Supervisory Support..."></textarea>
+                      </div>
+                      <div class="d-flex gap-2">
+                        <button class="btn btn-primary flex-fill" type="submit" id="invoiceSubmitBtn">Generate Invoice</button>
+                        <button class="btn btn-outline-secondary" type="button" id="invoiceResetBtn">Reset</button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+
+                <div class="col-12 col-xl-8">
+                  <div class="panel-card">
+                    <div class="panel-header flex-column flex-md-row align-items-md-center gap-3">
+                      <div>
+                        <h3>Client Invoices & Receivables</h3>
+                        <p>Track school invoice settlements and print official vouchers.</p>
+                      </div>
+                      <div class="ms-md-auto d-flex gap-2 flex-wrap">
+                        <select class="form-select form-select-sm filter-select" id="invoiceStatusFilter" style="width: 120px;">
+                          <option value="all">All Status</option>
+                          <option value="Sent">Sent</option>
+                          <option value="Paid">Paid</option>
+                          <option value="Overdue">Overdue</option>
+                          <option value="Draft">Draft</option>
+                        </select>
+                        <input class="form-control form-control-sm" id="invoiceSearch" placeholder="Search invoices...">
+                        <button class="btn btn-sm btn-outline-light" id="exportInvoicesCsvBtn" title="Export Invoices to CSV"><i class="bi bi-download"></i></button>
+                      </div>
+                    </div>
+                    <div class="table-responsive">
+                      <table class="table align-middle table-hover data-table">
+                        <thead>
+                          <tr>
+                            <th>Invoice #</th><th>Client School</th><th>Issue Date</th><th>Due Date</th><th class="text-end">Amount</th><th>Status</th><th class="text-end"></th>
+                          </tr>
+                        </thead>
+                        <tbody id="invoicesTableBody"></tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1446,15 +1703,15 @@
                 <div class="col-12 col-md-3"><div class="mini-metric"><span>Total Bonuses</span><strong id="payrollBonusesMetric" class="text-success">NGN 0</strong></div></div>
               </div>
               <div class="panel-card">
-                <div class="panel-header">
+                <div class="panel-header flex-column flex-md-row align-items-md-center gap-3">
                   <div>
                     <h3>Employee Salary Summary</h3>
                     <p>Gross salary, adjustments, deductions, and final amount payable.</p>
                   </div>
                   <div class="ms-md-auto d-flex align-items-center gap-2 flex-wrap">
-                    <label class="form-label mb-0 small text-muted" for="payrollPeriodFilter">Payroll month</label>
-                    <select class="form-select" id="payrollPeriodFilter"></select>
+                    <select class="form-select form-select-sm" id="payrollPeriodFilter" style="width: 140px;"></select>
                     <span class="badge rounded-pill text-bg-light px-3 py-2" id="payrollPeriodLabel">April 2026</span>
+                    <button class="btn btn-sm btn-outline-info" id="reconcilePayrollBtn" title="Post disbursed payroll as operating expense to Finance General Ledger"><i class="bi bi-arrow-repeat me-1"></i>Post to Ledger</button>
                     <button class="btn btn-sm btn-success" id="batchPayrollPaidBtn"><i class="bi bi-check-all me-1"></i>Batch Mark All Paid</button>
                   </div>
                 </div>
@@ -1462,7 +1719,7 @@
                   <table class="table align-middle table-hover data-table">
                     <thead>
                       <tr>
-                        <th>Employee</th><th>Period</th><th class="text-end">Base Salary</th><th class="text-end">Bonuses</th><th class="text-end">Loans + Advances</th><th class="text-end">Other Deductions</th><th class="text-end">Net Salary</th><th class="text-end">Carry Forward</th><th>Status</th><th></th>
+                        <th>Employee</th><th>Period</th><th class="text-end">Base Salary</th><th class="text-end">Bonuses</th><th class="text-end">Loans + Advances</th><th class="text-end">Other Deductions</th><th class="text-end">Net Salary</th><th class="text-end">Carry Forward</th><th>Status</th><th class="text-end"></th>
                       </tr>
                     </thead>
                     <tbody id="payrollSummaryTableBody"></tbody>
@@ -1480,19 +1737,39 @@
                 <div class="panel-header">
                   <div>
                     <h3>Budget Planner</h3>
-                    <p>Set salary and operations limits.</p>
+                    <p>Set company and departmental spending targets.</p>
                   </div>
                 </div>
                 <form id="budgetForm" class="stack-form">
-                  <div>
+                  <h6 class="text-primary fw-bold mb-2">Company Global Limits</h6>
+                  <div class="mb-3">
                     <label class="form-label">Salary Budget (NGN)</label>
                     <input class="form-control" id="salaryBudget" type="number" min="0" step="1" required>
                   </div>
-                  <div>
+                  <div class="mb-3">
                     <label class="form-label">Operations Budget (NGN)</label>
                     <input class="form-control" id="operationsBudget" type="number" min="0" step="1" required>
                   </div>
-                  <button class="btn btn-primary" type="submit">Update Budget</button>
+
+                  <h6 class="text-primary fw-bold mt-3 mb-2">Department Allocations</h6>
+                  <div class="mb-3">
+                    <label class="form-label">Academic Supervisors Office (NGN)</label>
+                    <input class="form-control" id="academicBudgetInput" type="number" min="0" step="1" placeholder="₦0">
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">Developers & Tech Office (NGN)</label>
+                    <input class="form-control" id="developerBudgetInput" type="number" min="0" step="1" placeholder="₦0">
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">Welfare & HR Operations (NGN)</label>
+                    <input class="form-control" id="welfareBudgetInput" type="number" min="0" step="1" placeholder="₦0">
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">Executive Admin & Management (NGN)</label>
+                    <input class="form-control" id="adminBudgetInput" type="number" min="0" step="1" placeholder="₦0">
+                  </div>
+
+                  <button class="btn btn-primary w-100 mt-2" type="submit">Update & Save Budgets</button>
                 </form>
               </div>
             </div>
@@ -1500,22 +1777,36 @@
               <div class="panel-card mb-4">
                 <div class="panel-header">
                   <div>
-                    <h3>Actual Spending vs Budget</h3>
-                    <p>Automatic alerts when spending exceeds limits.</p>
+                    <h3>Company Overview: Spending vs Budget</h3>
+                    <p>Real-time burn rate and spending limit variance.</p>
                   </div>
                 </div>
                 <div class="row g-4 budget-grid">
-                  <div class="col-12 col-md-6"><div class="budget-card"><span>Salary Budget</span><strong id="budgetSalaryValue">NGN 0</strong><small id="budgetSalaryStatus"></small></div></div>
-                  <div class="col-12 col-md-6"><div class="budget-card"><span>Operations Budget</span><strong id="budgetOperationsValue">NGN 0</strong><small id="budgetOperationsStatus"></small></div></div>
-                  <div class="col-12 col-md-6"><div class="budget-card"><span>Salary Actual</span><strong id="budgetSalaryActual">NGN 0</strong><small>Calculated from net payroll</small></div></div>
-                  <div class="col-12 col-md-6"><div class="budget-card"><span>Operations Actual</span><strong id="budgetOperationsActual">NGN 0</strong><small>Calculated from non-salary expenses</small></div></div>
+                  <div class="col-12 col-md-6"><div class="budget-card"><span>Salary Budget Target</span><strong id="budgetSalaryValue">NGN 0</strong><small id="budgetSalaryStatus"></small></div></div>
+                  <div class="col-12 col-md-6"><div class="budget-card"><span>Operations Budget Target</span><strong id="budgetOperationsValue">NGN 0</strong><small id="budgetOperationsStatus"></small></div></div>
+                  <div class="col-12 col-md-6"><div class="budget-card"><span>Salary Actual Spend</span><strong id="budgetSalaryActual">NGN 0</strong><small>Calculated from net payroll</small></div></div>
+                  <div class="col-12 col-md-6"><div class="budget-card"><span>Operations Actual Spend</span><strong id="budgetOperationsActual">NGN 0</strong><small>Calculated from non-salary expenses</small></div></div>
                 </div>
               </div>
+
+              <!-- Departmental Budget Gauges -->
+              <div class="panel-card mb-4">
+                <div class="panel-header">
+                  <div>
+                    <h3>Departmental Budget Utilization</h3>
+                    <p>Live progress meters for each organizational department.</p>
+                  </div>
+                </div>
+                <div class="row g-3" id="departmentBudgetsContainer">
+                  <!-- Dynamically rendered departmental progress bars -->
+                </div>
+              </div>
+
               <div class="panel-card">
                 <div class="panel-header">
                   <div>
-                    <h3>Budget Alerts</h3>
-                    <p>Over-limit items appear here instantly.</p>
+                    <h3>Budget Alerts & Overspend Warnings</h3>
+                    <p>Instant notification if any department or category approaches or exceeds limits.</p>
                   </div>
                 </div>
                 <div id="budgetAlerts" class="alert-stack"></div>
@@ -1603,6 +1894,50 @@
     </div>
   </div>
 
+  <!-- Transaction Detail Inspector Modal -->
+  <div class="modal fade" id="transactionDetailModal" tabindex="-1" aria-labelledby="transactionDetailModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+      <div class="modal-content dark-modal">
+        <div class="modal-header border-bottom border-secondary border-opacity-25">
+          <div class="d-flex align-items-center gap-2">
+            <span class="brand-mark"><img src="logo.jpg" alt="Logo" style="width:28px;height:28px;border-radius:6px;"></span>
+            <h5 class="modal-title mb-0" id="transactionDetailModalTitle">Financial Transaction Breakdown</h5>
+          </div>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body" id="transactionDetailModalBody">
+          <!-- Populated dynamically via JS -->
+        </div>
+        <div class="modal-footer border-top border-secondary border-opacity-25">
+          <button type="button" class="btn btn-outline-light" onclick="window.print()"><i class="bi bi-printer me-1"></i>Print Voucher</button>
+          <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Printable Client Invoice Modal -->
+  <div class="modal fade" id="invoicePrintModal" tabindex="-1" aria-labelledby="invoicePrintModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+      <div class="modal-content dark-modal">
+        <div class="modal-header border-bottom border-secondary border-opacity-25">
+          <div class="d-flex align-items-center gap-2">
+            <span class="brand-mark"><img src="logo.jpg" alt="Logo" style="width:28px;height:28px;border-radius:6px;"></span>
+            <h5 class="modal-title mb-0" id="invoicePrintModalTitle">Client Tax Invoice Voucher</h5>
+          </div>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body p-0" id="invoicePrintModalBody">
+          <!-- Populated dynamically via JS -->
+        </div>
+        <div class="modal-footer border-top border-secondary border-opacity-25">
+          <button type="button" class="btn btn-outline-light" onclick="window.print()"><i class="bi bi-printer me-1"></i>Print Invoice</button>
+          <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- System Data Export & Backup Modal -->
   <div class="modal fade" id="dataExportModal" tabindex="-1" aria-labelledby="dataExportModalTitle" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
@@ -1642,6 +1977,14 @@
               </div>
               <i class="bi bi-download fs-5"></i>
             </button>
+            <hr class="border-secondary my-1">
+            <button class="btn btn-outline-danger text-start p-3 d-flex align-items-center justify-content-between" id="purgeHistoricalDataBtn">
+              <div>
+                <div class="fw-bold text-danger"><i class="bi bi-trash3-fill me-2"></i>Purge Historical Records Before Today</div>
+                <div class="small text-white-50">Permanently delete all attendance, tasks, reports, and financial entries prior to today from both Firestore and local database.</div>
+              </div>
+              <i class="bi bi-shield-x fs-5 text-danger"></i>
+            </button>
           </div>
         </div>
         <div class="modal-footer border-top border-secondary border-opacity-25">
@@ -1655,6 +1998,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-  <script type="module" src="app.js?v=20260905_1605"></script>
+  <script type="module" src="app.js?v=20260905_1945"></script>
 </body>
 </html>

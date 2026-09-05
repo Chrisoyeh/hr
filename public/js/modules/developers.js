@@ -118,7 +118,7 @@ export function renderDevelopersView() {
   }
 }
 
-export function submitDeveloperReport(event, refreshAll) {
+export async function submitDeveloperReport(event, refreshAll) {
   event.preventDefault();
   const id = dom.devReportId?.value || `drep-${crypto.randomUUID()}`;
 
@@ -173,7 +173,7 @@ export function submitDeveloperReport(event, refreshAll) {
     });
   }
 
-  saveDatabase();
+  await saveDatabase();
   resetDeveloperReportForm();
   showToast('Developer weekly report submitted successfully.', 'success');
   if (typeof refreshAll === 'function') refreshAll();
