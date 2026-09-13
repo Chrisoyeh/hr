@@ -17,6 +17,46 @@ export function exportFullSystemJson() {
   showToast('Full system JSON backup exported successfully.', 'success');
 }
 
+export function importFullSystemJson(file, onComplete) {
+  return new Promise((resolve, reject) => {
+    if (!file) return reject(new Error('No file provided'));
+    const isOpsManager = state.session?.role === 'admin' || state.session?.role === 'ops_manager';
+    if (!isOpsManager) {
+      showToast('Permission denied: Only the Operations Manager can restore backups.', 'danger');
+      return reject(new Error('Permission denied'));
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const raw = JSON.parse(e.target.result);
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+          throw new Error('Invalid JSON backup format: Root structure must be a database object.');
+        }
+
+        const { prepareDatabase, saveDatabase } = await import('./firestore.js');
+        const prepared = await prepareDatabase(raw);
+        state.db = prepared;
+        await saveDatabase(state.db);
+
+        showToast('System backup restored successfully! Database updated across cloud & local storage.', 'success');
+        if (typeof onComplete === 'function') onComplete();
+        resolve(prepared);
+      } catch (err) {
+        console.error('Failed to import JSON backup:', err);
+        showToast(`Restore failed: ${err.message || 'Invalid JSON file'}`, 'danger');
+        reject(err);
+      }
+    };
+    reader.onerror = () => {
+      const err = new Error('Error reading backup file.');
+      showToast(err.message, 'danger');
+      reject(err);
+    };
+    reader.readAsText(file);
+  });
+}
+
 export function exportPayrollCsv(getEmployeeDeductions, getPayrollPayment) {
   const periodKey = getSelectedPayrollPeriodKey();
   const headers = ['Employee ID', 'Full Name', 'Department', 'Position', 'Base Salary', 'Bonuses', 'Loans & Advances', 'Deductions', 'Net Salary', 'Status'];

@@ -1,7 +1,7 @@
 import { dom, cacheDom } from './js/modules/dom.js';
 import { state, normalizeDatabase, loadSession, saveSession, getPayrollPayment, setPayrollPayment, getPayrollPeriodLabel, getSelectedPayrollPeriodKey, getCurrentPayrollPeriodKey } from './js/state.js';
 import { loadDatabase, saveDatabase, startRealtimeListener, purgeHistoricalDataBeforeToday } from './js/services/firestore.js';
-import { exportFullSystemJson, exportPayrollCsv, exportAttendanceCsv, exportSupervisorsCsv, exportFinanceLedgerCsv, exportInvoicesCsv } from './js/services/export.js';
+import { exportFullSystemJson, importFullSystemJson, exportPayrollCsv, exportAttendanceCsv, exportSupervisorsCsv, exportFinanceLedgerCsv, exportInvoicesCsv } from './js/services/export.js';
 import { renderUserAvatars, compressImage, updateAvatarElement, debounce, showToast, todayISO, showAppLoading, updateAppLoading, hideAppLoading } from './js/utils.js';
 
 import { handleLogin, logout, configureRoleUi, switchDemoRole, setupLiveClock } from './js/modules/auth.js';
@@ -595,8 +595,55 @@ function bindEvents() {
     dom.staffPrintPaySlipBtn.addEventListener('click', openStaffPaySlipModal);
   }
 
-  // Data Export Action Listeners
+  // Data Export & Backup Action Listeners
   if (dom.exportFullJsonBtn) dom.exportFullJsonBtn.addEventListener('click', exportFullSystemJson);
+
+  if (dom.importFullJsonBtn && dom.importJsonFileInput) {
+    dom.importFullJsonBtn.addEventListener('click', () => {
+      const isOpsManager = state.session?.role === 'admin' || state.session?.role === 'ops_manager';
+      if (!isOpsManager) {
+        showToast('Permission denied: Only the Operations Manager can restore backups.', 'danger');
+        return;
+      }
+      dom.importJsonFileInput.value = '';
+      dom.importJsonFileInput.click();
+    });
+
+    dom.importJsonFileInput.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const isOpsManager = state.session?.role === 'admin' || state.session?.role === 'ops_manager';
+      if (!isOpsManager) {
+        showToast('Permission denied: Only the Operations Manager can restore backups.', 'danger');
+        dom.importJsonFileInput.value = '';
+        return;
+      }
+
+      if (!confirm(`RESTORE SYSTEM BACKUP: Are you sure you want to restore "${file.name}"? This will update the entire database state and synchronize to Firestore cloud.`)) {
+        dom.importJsonFileInput.value = '';
+        return;
+      }
+
+      showAppLoading('Restoring system database backup...', 'Synchronizing Firestore cloud...');
+      try {
+        await importFullSystemJson(file, () => {
+          refreshAll();
+          const modalEl = document.getElementById('dataExportModal');
+          if (modalEl && typeof bootstrap !== 'undefined') {
+            const modalInstance = bootstrap.Modal.getInstance(modalEl);
+            if (modalInstance) modalInstance.hide();
+          }
+        });
+      } catch (err) {
+        console.error('Backup restore error:', err);
+      } finally {
+        hideAppLoading(300);
+        dom.importJsonFileInput.value = '';
+      }
+    });
+  }
+
   if (dom.exportPayrollCsvBtn) dom.exportPayrollCsvBtn.addEventListener('click', () => exportPayrollCsv(getEmployeeDeductions, getPayrollPayment));
   if (dom.exportAttendanceCsvBtn) dom.exportAttendanceCsvBtn.addEventListener('click', () => exportAttendanceCsv(isLate, getAttendancePenalty));
   if (dom.exportSupervisorsCsvBtn) dom.exportSupervisorsCsvBtn.addEventListener('click', exportSupervisorsCsv);

@@ -46,22 +46,21 @@ export function purgeHistoricalDataBeforeToday(database) {
 
 export async function prepareDatabase(database) {
   const normalized = normalizeDatabase(database);
-  const purged = purgeHistoricalDataBeforeToday(normalized);
 
-  if (!purged.offices || purged.offices.length === 0) {
-    purged.offices = [
+  if (!normalized.offices || normalized.offices.length === 0) {
+    normalized.offices = [
       { id: 'off-hq', name: 'Lagos Headquarters', latitude: 6.5244, longitude: 3.3792, radius: 100 }
     ];
   }
 
-  if (purged.users.some((user) => !user.passwordHash)) {
-    purged.users = await Promise.all(purged.users.map(async (user) => ({
+  if (normalized.users.some((user) => !user.passwordHash)) {
+    normalized.users = await Promise.all(normalized.users.map(async (user) => ({
       ...user,
       passwordHash: user.passwordHash || await hashPassword(user.password || 'Chrisella1!')
     })));
   }
 
-  purged.users = await Promise.all(purged.users.map(async (user) => {
+  normalized.users = await Promise.all(normalized.users.map(async (user) => {
     if (user.role === 'admin') {
       return {
         ...user,
@@ -77,13 +76,13 @@ export async function prepareDatabase(database) {
     };
   }));
 
-  const nonStaffUsers = purged.users.filter((user) => user.role !== 'staff' || !user.employeeId);
+  const nonStaffUsers = normalized.users.filter((user) => user.role !== 'staff' || !user.employeeId);
   const syncedEmployees = [];
   const syncedStaffUsers = [];
-  const syncedPayrollPayments = Array.isArray(purged.payrollPayments) ? [...purged.payrollPayments] : [];
+  const syncedPayrollPayments = Array.isArray(normalized.payrollPayments) ? [...normalized.payrollPayments] : [];
   const payrollPaymentKeys = new Set(syncedPayrollPayments.map((entry) => `${entry.employeeId}|${entry.periodKey}`));
 
-  for (const employee of purged.employees) {
+  for (const employee of normalized.employees) {
     const email = String(employee.email || employee.username || buildEmployeeEmail(employee.fullName, employee.id)).toLowerCase();
     const salaryPaid = Boolean(employee.salaryPaid);
     const salaryPaidAt = salaryPaid ? (employee.salaryPaidAt || new Date().toISOString()) : null;
@@ -111,7 +110,7 @@ export async function prepareDatabase(database) {
       salaryPaidAt
     });
 
-    const existingStaffUser = purged.users.find((u) => u.role === 'staff' && u.employeeId === employee.id);
+    const existingStaffUser = normalized.users.find((u) => u.role === 'staff' && u.employeeId === employee.id);
     const staffPasswordHash = existingStaffUser?.passwordHash || await hashPassword(employee.id);
 
     syncedStaffUsers.push({
@@ -126,7 +125,7 @@ export async function prepareDatabase(database) {
   }
 
   return {
-    ...purged,
+    ...normalized,
     users: [...nonStaffUsers, ...syncedStaffUsers],
     employees: syncedEmployees,
     payrollPayments: syncedPayrollPayments

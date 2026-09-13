@@ -1956,6 +1956,14 @@
               </div>
               <i class="bi bi-download fs-5"></i>
             </button>
+            <button class="btn btn-outline-warning text-start p-3 d-flex align-items-center justify-content-between" id="importFullJsonBtn">
+              <div>
+                <div class="fw-bold text-warning"><i class="bi bi-cloud-arrow-up-fill text-warning me-2"></i>Restore System Backup (.JSON)</div>
+                <div class="small text-white-50">Upload and restore a previous JSON backup to Firestore and local storage.</div>
+              </div>
+              <i class="bi bi-upload fs-5 text-warning"></i>
+            </button>
+            <input type="file" id="importJsonFileInput" accept=".json,application/json" style="display: none;">
             <button class="btn btn-outline-light text-start p-3 d-flex align-items-center justify-content-between" id="exportPayrollCsvBtn">
               <div>
                 <div class="fw-bold text-white"><i class="bi bi-filetype-csv text-success me-2"></i>Payroll & Deductions Ledger (.CSV)</div>

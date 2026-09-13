@@ -1239,10 +1239,18 @@ canvas {
   #invoicePrintModal.show .modal-dialog,
   #invoicePrintModal.show .modal-content,
   #invoicePrintModal.show .modal-body,
-  #invoicePrintModal.show .modal-body * {
+  #invoicePrintModal.show .modal-body *,
+  #transactionDetailModal.show .modal-dialog,
+  #transactionDetailModal.show .modal-content,
+  #transactionDetailModal.show .modal-body,
+  #transactionDetailModal.show .modal-body *,
+  #reportDetailModal.show .modal-dialog,
+  #reportDetailModal.show .modal-content,
+  #reportDetailModal.show .modal-body,
+  #reportDetailModal.show .modal-body * {
     visibility: visible !important;
   }
-  #staffPaySlipModal, #invoicePrintModal {
+  #staffPaySlipModal, #invoicePrintModal, #transactionDetailModal, #reportDetailModal {
     position: absolute !important;
     left: 0 !important;
     top: 0 !important;
@@ -1265,9 +1273,10 @@ canvas {
     background: #ffffff !important;
     color: #000000 !important;
   }
-  .printable-invoice, .payslip-print-sheet {
+  .printable-invoice, .payslip-print-sheet, .transaction-detail-card, .report-detail-section {
     background: #ffffff !important;
     color: #000000 !important;
+    border: 1px solid #dee2e6 !important;
   }
   .table {
     color: #000000 !important;
@@ -1277,10 +1286,10 @@ canvas {
     background-color: #ffffff !important;
     color: #000000 !important;
   }
-  .text-white, .text-light, .text-white-50 {
-    color: #000000 !important;
+  .text-white, .text-light, .text-white-50, .text-muted {
+    color: #333333 !important;
   }
-  .bg-dark, .bg-secondary {
+  .bg-dark, .bg-secondary, .bg-opacity-10 {
     background-color: #f8f9fa !important;
     color: #000000 !important;
   }
