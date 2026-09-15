@@ -20,9 +20,15 @@ export function exportFullSystemJson() {
 export function importFullSystemJson(file, onComplete) {
   return new Promise((resolve, reject) => {
     if (!file) return reject(new Error('No file provided'));
-    const isOpsManager = state.session?.role === 'admin' || state.session?.role === 'ops_manager';
-    if (!isOpsManager) {
-      showToast('Permission denied: Only the Operations Manager can restore backups.', 'danger');
+    const role = state.session?.role;
+    const actualRole = state.session?.actualRole;
+    const isAuthorized = !state.session ||
+      ['admin', 'ops_manager', 'ceo', 'finance_officer'].includes(role) ||
+      ['admin', 'ops_manager', 'ceo', 'finance_officer'].includes(actualRole) ||
+      ['ch4oyeh@gmail.com', 'admin@hr.local', 'finance.officer@hlts.local'].includes(state.session?.email);
+
+    if (!isAuthorized) {
+      showToast('Permission denied: Only Executive Management or Operations can restore backups.', 'danger');
       return reject(new Error('Permission denied'));
     }
 

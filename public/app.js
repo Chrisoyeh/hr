@@ -4,7 +4,7 @@ import { loadDatabase, saveDatabase, startRealtimeListener, purgeHistoricalDataB
 import { exportFullSystemJson, importFullSystemJson, exportPayrollCsv, exportAttendanceCsv, exportSupervisorsCsv, exportFinanceLedgerCsv, exportInvoicesCsv } from './js/services/export.js';
 import { renderUserAvatars, compressImage, updateAvatarElement, debounce, showToast, todayISO, showAppLoading, updateAppLoading, hideAppLoading } from './js/utils.js';
 
-import { handleLogin, logout, configureRoleUi, switchDemoRole, setupLiveClock } from './js/modules/auth.js';
+import { handleLogin, logout, configureRoleUi, switchDemoRole, setupLiveClock, getRoleAllowedViews } from './js/modules/auth.js';
 import { renderDashboard, init3DTilt } from './js/modules/dashboard.js';
 import { renderManagementIssues, openManagementIssueModal, saveManagementIssue } from './js/modules/managementIssues.js';
 import { renderSupervisorsView, submitSupervisorReport, resetSupervisorReportForm, saveSupervisorDraft, restoreSupervisorDraft, getSupDraftKey, openReportDetailModal } from './js/modules/supervisors.js';
@@ -15,23 +15,34 @@ import { renderEmployees, upsertEmployee, resetEmployeeForm, buildSelectOptions 
 import { renderAttendance, upsertAttendance, resetAttendanceForm, submitStaffAttendance, toggleAttendanceLock, handleAttendanceFormQuickSign, isLate, getAttendancePenalty } from './js/modules/attendance.js';
 import { renderTasks, upsertTask, resetTaskForm, renderTaskCountdowns, updateCountdownDisplays } from './js/modules/tasks.js';
 import { renderPayrollAdjustments, submitPayrollAdjustment, resetPayrollAdjustmentForm, getEmployeeDeductions, getStaffDeductionRows, getPayrollTotals, batchMarkAllPayrollPaid, openStaffPaySlipModal, populatePayrollPeriodFilter, reconcilePayrollWithFinance } from './js/modules/payroll.js';
-import { renderFinance, submitIncome, resetIncomeForm, openTransactionDetailModal } from './js/modules/finance.js';
+import { renderFinance, submitIncome, resetIncomeForm, openTransactionDetailModal, renderExpenseVouchers, submitExpenseVoucherForm, resetVoucherForm, handleVoucherAction } from './js/modules/finance.js';
 import { renderBudget, submitBudget } from './js/modules/budget.js';
 import { renderInvoices, submitInvoice, resetInvoiceForm, settleInvoice, openPrintInvoiceModal } from './js/modules/invoicing.js';
 import { renderStaffPortal } from './js/modules/staffPortal.js';
+import { renderCeoCommandCenter, submitCeoDirectiveForm, handleApprovalAction, renderExecutiveApprovalCenter, renderSchoolPerformanceMatrix, toggleDirectiveStatus } from './js/modules/ceo.js';
 
 export function setActiveView(viewId) {
+  const currentRole = state.session?.role || 'ceo';
+  const allowedViews = getRoleAllowedViews(currentRole);
+  if (!allowedViews.includes(viewId)) {
+    viewId = allowedViews[0] || 'ceoCommandCenterView';
+  }
+
   const panel = document.getElementById(viewId);
   if (!panel) return;
 
-  document.querySelectorAll('.view-panel').forEach((el) => el.classList.remove('active'));
+  document.querySelectorAll('.view-panel').forEach((el) => {
+    el.classList.remove('active');
+  });
   document.querySelectorAll('#sidebarNav .nav-link').forEach((el) => el.classList.remove('active'));
 
+  panel.classList.remove('d-none');
   panel.classList.add('active');
   const button = document.querySelector(`#sidebarNav [data-view="${viewId}"]`);
   if (button) button.classList.add('active');
 
   const titles = {
+    ceoCommandCenterView: 'Executive Command Center',
     dashboardView: 'Executive Dashboard',
     managementIssuesView: 'Management Issues & Urgent Hub',
     supervisorsView: 'Academic Supervisors Office',
@@ -54,11 +65,13 @@ export function setActiveView(viewId) {
 }
 
 export function refreshAll() {
+  renderCeoCommandCenter();
   renderEmployees(getEmployeeDeductions);
   renderAttendance();
   renderTasks();
   renderTaskCountdowns();
   renderFinance();
+  renderExpenseVouchers();
   renderInvoices();
   renderPayrollAdjustments();
   renderBudget(getPayrollTotals);
@@ -69,15 +82,15 @@ export function refreshAll() {
   renderSchoolsView();
   renderDashboard();
   renderStaffPortal(getEmployeeDeductions, getStaffDeductionRows);
-  
-  const currentEmp = (state.db?.employees || []).find(e => 
-    (state.session?.employeeId && e.id === state.session.employeeId) || 
+
+  const currentEmp = (state.db?.employees || []).find(e =>
+    (state.session?.employeeId && e.id === state.session.employeeId) ||
     (state.session?.email && (e.email || '').toLowerCase() === String(state.session?.email || '').toLowerCase())
   );
   const currentAvatar = currentEmp?.avatar || state.session?.avatar || null;
   const currentName = state.session?.name || currentEmp?.fullName || 'User';
   renderUserAvatars(currentAvatar, currentName);
-  
+
   requestAnimationFrame(init3DTilt);
 }
 
@@ -435,15 +448,46 @@ async function handleTableActions(event) {
   if (action === 'delete-school') {
     deleteSchool(id, refreshAll);
   }
+
+  if (action === 'approve-item') {
+    const notes = prompt('Enter optional approval notes or instructions for the team:', '');
+    if (notes !== null) {
+      await handleApprovalAction(id, 'Approved', notes);
+      refreshAll();
+    }
+  }
+
+  if (action === 'reject-item') {
+    const notes = prompt('Enter reason for rejection:', '');
+    if (notes !== null) {
+      await handleApprovalAction(id, 'Rejected', notes);
+      refreshAll();
+    }
+  }
+
+  if (action === 'toggle-directive-status') {
+    await toggleDirectiveStatus(id);
+    refreshAll();
+  }
+
+  if (action === 'approve-voucher') {
+    await handleVoucherAction('approve', id, refreshAll);
+  }
+
+  if (action === 'disburse-voucher') {
+    await handleVoucherAction('disburse', id, refreshAll);
+  }
+
+  if (action === 'reject-voucher') {
+    await handleVoucherAction('reject', id, refreshAll);
+  }
 }
 
 function bindEvents() {
   const onLogin = (e) => handleLogin(e, () => { configureRoleUi(setActiveView); bootApp(); });
   if (dom.loginForm) dom.loginForm.addEventListener('submit', onLogin);
-  const loginBtn = document.querySelector('#loginForm button[type="submit"]');
-  if (loginBtn) loginBtn.addEventListener('click', onLogin);
   if (dom.logoutBtn) dom.logoutBtn.addEventListener('click', logout);
-  
+
   const backdrop = document.getElementById('sidebarBackdrop');
   if (dom.mobileMenuBtn) {
     dom.mobileMenuBtn.addEventListener('click', () => {
@@ -471,6 +515,11 @@ function bindEvents() {
   if (dom.financeSearch) dom.financeSearch.addEventListener('input', debounce(renderFinance, 150));
   if (dom.exportFinanceCsvBtn) dom.exportFinanceCsvBtn.addEventListener('click', exportFinanceLedgerCsv);
 
+  // Expense Vouchers Event Listeners
+  if (dom.voucherForm) dom.voucherForm.addEventListener('submit', (e) => submitExpenseVoucherForm(e, refreshAll));
+  if (dom.voucherResetBtn) dom.voucherResetBtn.addEventListener('click', resetVoucherForm);
+  if (dom.voucherStatusFilter) dom.voucherStatusFilter.addEventListener('change', renderExpenseVouchers);
+
   // Invoicing Event Listeners
   if (dom.invoiceForm) dom.invoiceForm.addEventListener('submit', (e) => submitInvoice(e, refreshAll));
   if (dom.invoiceResetBtn) dom.invoiceResetBtn.addEventListener('click', resetInvoiceForm);
@@ -484,7 +533,7 @@ function bindEvents() {
   if (dom.payrollAdjustmentForm) dom.payrollAdjustmentForm.addEventListener('submit', (e) => submitPayrollAdjustment(e, refreshAll));
   if (dom.payrollAdjustmentResetBtn) dom.payrollAdjustmentResetBtn.addEventListener('click', resetPayrollAdjustmentForm);
   if (dom.budgetForm) dom.budgetForm.addEventListener('submit', (e) => submitBudget(e, refreshAll));
-  
+
   // Debounced search filters
   if (dom.payrollAdjustmentSearch) dom.payrollAdjustmentSearch.addEventListener('input', debounce(renderPayrollAdjustments, 150));
   if (dom.payrollPeriodFilter) dom.payrollPeriodFilter.addEventListener('change', renderPayrollAdjustments);
@@ -600,9 +649,12 @@ function bindEvents() {
 
   if (dom.importFullJsonBtn && dom.importJsonFileInput) {
     dom.importFullJsonBtn.addEventListener('click', () => {
-      const isOpsManager = state.session?.role === 'admin' || state.session?.role === 'ops_manager';
-      if (!isOpsManager) {
-        showToast('Permission denied: Only the Operations Manager can restore backups.', 'danger');
+      const isAuthorized = !state.session ||
+        ['admin', 'ops_manager', 'ceo', 'finance_officer'].includes(state.session?.role) ||
+        ['admin', 'ops_manager', 'ceo', 'finance_officer'].includes(state.session?.actualRole) ||
+        ['ch4oyeh@gmail.com', 'admin@hr.local', 'finance.officer@hlts.local'].includes(state.session?.email);
+      if (!isAuthorized) {
+        showToast('Permission denied: Only Executive Management or Operations can restore backups.', 'danger');
         return;
       }
       dom.importJsonFileInput.value = '';
@@ -613,9 +665,12 @@ function bindEvents() {
       const file = e.target.files?.[0];
       if (!file) return;
 
-      const isOpsManager = state.session?.role === 'admin' || state.session?.role === 'ops_manager';
-      if (!isOpsManager) {
-        showToast('Permission denied: Only the Operations Manager can restore backups.', 'danger');
+      const isAuthorized = !state.session ||
+        ['admin', 'ops_manager', 'ceo', 'finance_officer'].includes(state.session?.role) ||
+        ['admin', 'ops_manager', 'ceo', 'finance_officer'].includes(state.session?.actualRole) ||
+        ['ch4oyeh@gmail.com', 'admin@hr.local', 'finance.officer@hlts.local'].includes(state.session?.email);
+      if (!isAuthorized) {
+        showToast('Permission denied: Only Executive Management or Operations can restore backups.', 'danger');
         dom.importJsonFileInput.value = '';
         return;
       }
@@ -644,15 +699,54 @@ function bindEvents() {
     });
   }
 
+  if (dom.syncFromCloudBtn) {
+    dom.syncFromCloudBtn.addEventListener('click', async () => {
+      showAppLoading('Connecting to Firestore Cloud...', 'Restoring live database state...');
+      try {
+        const { getDoc } = await import('https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js');
+        const { firebaseAppStateRef, prepareDatabase } = await import('./js/services/firestore.js');
+        const snapshot = await getDoc(firebaseAppStateRef);
+        if (snapshot.exists()) {
+          const raw = snapshot.data();
+          const db = await prepareDatabase(raw);
+          state.db = db;
+          try {
+            localStorage.setItem('hlts_hr_suite_db_v2', JSON.stringify(db));
+          } catch (_) { }
+          refreshAll();
+          const empCount = (db.employees || []).length;
+          const schCount = (db.schools || []).length;
+          const finCount = (db.financeTransactions || []).length;
+          showToast(`Successfully restored ${empCount} employees, ${schCount} schools, and ${finCount} financial records from Firestore cloud!`, 'success');
+          const modalEl = document.getElementById('dataExportModal');
+          if (modalEl && typeof bootstrap !== 'undefined') {
+            const modalInstance = bootstrap.Modal.getInstance(modalEl);
+            if (modalInstance) modalInstance.hide();
+          }
+        } else {
+          showToast('No database state found in Firestore cloud.', 'warning');
+        }
+      } catch (err) {
+        console.error('Failed to sync from Firestore:', err);
+        showToast(`Failed to restore from Firestore: ${err.message || 'Connection error'}`, 'danger');
+      } finally {
+        hideAppLoading(300);
+      }
+    });
+  }
+
   if (dom.exportPayrollCsvBtn) dom.exportPayrollCsvBtn.addEventListener('click', () => exportPayrollCsv(getEmployeeDeductions, getPayrollPayment));
   if (dom.exportAttendanceCsvBtn) dom.exportAttendanceCsvBtn.addEventListener('click', () => exportAttendanceCsv(isLate, getAttendancePenalty));
   if (dom.exportSupervisorsCsvBtn) dom.exportSupervisorsCsvBtn.addEventListener('click', exportSupervisorsCsv);
 
   if (dom.purgeHistoricalDataBtn) {
     dom.purgeHistoricalDataBtn.addEventListener('click', async () => {
-      const isOpsManager = state.session?.role === 'admin' || state.session?.role === 'ops_manager';
-      if (!isOpsManager) {
-        showToast('Permission denied: Only the Operations Manager can purge historical data.', 'danger');
+      const isAuthorized = !state.session ||
+        ['admin', 'ops_manager', 'ceo'].includes(state.session?.role) ||
+        ['admin', 'ops_manager', 'ceo'].includes(state.session?.actualRole) ||
+        ['ch4oyeh@gmail.com', 'admin@hr.local'].includes(state.session?.email);
+      if (!isAuthorized) {
+        showToast('Permission denied: Only Executive Management or Operations can purge historical data.', 'danger');
         return;
       }
       if (!confirm('PERMANENT ACTION: Are you sure you want to delete all historical attendance, task, report, and financial records before today from both Firestore and local database?')) {
@@ -670,6 +764,26 @@ function bindEvents() {
       } finally {
         hideAppLoading(300);
       }
+    });
+  }
+
+  // Executive & CEO Event Listeners
+  if (dom.ceoDirectiveForm) {
+    dom.ceoDirectiveForm.addEventListener('submit', (e) => submitCeoDirectiveForm(e, refreshAll));
+  }
+
+  if (dom.ceoSchoolSearch) {
+    dom.ceoSchoolSearch.addEventListener('input', debounce(() => renderSchoolPerformanceMatrix(), 200));
+  }
+
+  const approvalFilterGroup = document.getElementById('ceoApprovalFilter');
+  if (approvalFilterGroup) {
+    approvalFilterGroup.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-filter]');
+      if (!btn) return;
+      approvalFilterGroup.querySelectorAll('button').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderExecutiveApprovalCenter(btn.dataset.filter);
     });
   }
 

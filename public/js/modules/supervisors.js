@@ -73,7 +73,7 @@ export function restoreSupervisorDraft(schoolId) {
 }
 
 export function renderSupervisorsView() {
-  const isOpsManager = state.session?.role === 'admin' || state.session?.role === 'ops_manager';
+  const isOpsManager = ['admin', 'ops_manager', 'ceo'].includes(state.session?.role) || ['admin', 'ops_manager', 'ceo'].includes(state.session?.actualRole);
 
   // Determine allowed schools for the active session
   let assignedSchools = [...(state.db?.schools || [])];

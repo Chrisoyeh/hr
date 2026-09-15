@@ -12,8 +12,9 @@ export function renderFinance() {
   const summary = buildFinanceSummary(range, deptFilter, typeFilter, search);
 
   // Render Table Rows
-  if (dom.incomeTableBody) {
-    dom.incomeTableBody.innerHTML = summary.rows || '<tr><td colspan="8" class="text-center text-muted py-4">No finance records matching filter criteria.</td></tr>';
+  const incomeTable = document.getElementById('incomeTableBody') || dom.incomeTableBody;
+  if (incomeTable) {
+    incomeTable.innerHTML = summary.rows || '<tr><td colspan="8" class="text-center text-muted py-4">No finance records matching filter criteria.</td></tr>';
   }
 
   // Render Executive P&L Metrics
@@ -137,6 +138,11 @@ export function buildFinanceSummary(range = 'monthly', deptFilter = 'all', typeF
 
 export async function submitIncome(event, refreshAll) {
   event.preventDefault();
+  const isAuthorized = state.session?.role === 'ceo' || state.session?.actualRole === 'ceo';
+  if (!isAuthorized) {
+    showToast('Permission denied: Only Executive Management (CEO) has access to manage financial records.', 'danger');
+    return;
+  }
   if (!state.db.financeTransactions) state.db.financeTransactions = [];
 
   const txnId = dom.incomeId?.value;
@@ -217,34 +223,97 @@ export function resetIncomeForm() {
   if (dom.incomePaymentMethod) dom.incomePaymentMethod.value = 'Bank Transfer';
   if (dom.incomeStatus) dom.incomeStatus.value = 'Completed';
   if (dom.incomeFormTitle) dom.incomeFormTitle.textContent = 'Record Financial Transaction';
-  if (dom.incomeSubmitBtn) dom.incomeSubmitBtn.textContent = 'Save Transaction';
+  if (dom.incomeSubmitBtn) dom.incomeSubmitBtn.textContent = 'Save Record';
 }
 
-export function openTransactionDetailModal(txnId) {
-  const txn = getAllTransactions().find(t => t.id === txnId);
+export async function deleteIncome(id, refreshAll) {
+  const isAuthorized = ['ceo', 'finance_officer'].includes(state.session?.role) || ['ceo', 'finance_officer'].includes(state.session?.actualRole);
+  if (!isAuthorized) {
+    showToast('Permission denied: Only Executive Management or Financial Officer can delete transactions.', 'danger');
+    return;
+  }
+
+  if (!confirm('Are you sure you want to delete this financial record?')) return;
+  state.db.financeTransactions = (state.db?.financeTransactions || []).filter(t => t.id !== id);
+  state.db.income = (state.db?.income || []).filter(t => t.id !== id);
+  await saveDatabase();
+  showToast('Transaction record removed.', 'success');
+  if (typeof refreshAll === 'function') refreshAll();
+}
+
+export function editIncome(id) {
+  const txn = (state.db?.financeTransactions || []).find(t => t.id === id);
   if (!txn) return;
 
-  const modalEl = document.getElementById('transactionDetailModal');
-  const bodyEl = document.getElementById('transactionDetailModalBody');
-  if (!modalEl || !bodyEl) return;
+  if (dom.incomeId) dom.incomeId.value = txn.id;
+  if (dom.incomeType) dom.incomeType.value = txn.type;
+  if (dom.incomeCategory) dom.incomeCategory.value = txn.category;
+  if (dom.incomeDepartment) dom.incomeDepartment.value = txn.department || 'General';
+  if (dom.incomeAmount) dom.incomeAmount.value = txn.amount;
+  if (dom.incomeDate) dom.incomeDate.value = txn.date || todayISO(0);
+  if (dom.incomePaymentMethod) dom.incomePaymentMethod.value = txn.paymentMethod || 'Bank Transfer';
+  if (dom.incomeStatus) dom.incomeStatus.value = txn.status || 'Completed';
+  if (dom.incomeReferenceNo) dom.incomeReferenceNo.value = txn.referenceNo || '';
+  if (dom.incomePayeePayer) dom.incomePayeePayer.value = txn.payeePayer || '';
+  if (dom.incomeDescription) dom.incomeDescription.value = txn.description || '';
 
-  bodyEl.innerHTML = `
-    <div class="transaction-detail-card p-3">
-      <div class="d-flex justify-content-between align-items-center mb-3 border-bottom pb-2">
-        <div>
-          <span class="badge ${txn.type === 'Revenue' ? 'text-bg-success' : 'text-bg-danger'} px-3 py-2 me-2">${txn.type}</span>
-          <span class="badge text-bg-secondary px-2 py-1">${txn.status || 'Completed'}</span>
+  if (dom.incomeFormTitle) dom.incomeFormTitle.textContent = `Edit Transaction (${txn.txnRef || ''})`;
+  if (dom.incomeSubmitBtn) dom.incomeSubmitBtn.textContent = 'Update Record';
+
+  if (dom.incomeForm) {
+    dom.incomeForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
+export function openTransactionDetailModal(id) {
+  const txn = (state.db?.financeTransactions || []).find(t => t.id === id);
+  if (!txn) return;
+
+  let modalEl = document.getElementById('financeDetailModal');
+  if (!modalEl) {
+    const div = document.createElement('div');
+    div.id = 'financeDetailModal';
+    div.className = 'modal fade';
+    div.tabIndex = -1;
+    div.innerHTML = `
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-secondary shadow-lg">
+          <div class="modal-header">
+            <h5 class="modal-title" id="financeModalTitle">Transaction Details</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body" id="financeModalBody"></div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+          </div>
         </div>
-        <div class="fw-bold font-monospace text-primary">${txn.txnRef || 'TXN-REF'}</div>
       </div>
+    `;
+    document.body.appendChild(div);
+    modalEl = div;
+  }
 
-      <div class="row g-3 mb-3">
+  const body = document.getElementById('financeModalBody');
+  const title = document.getElementById('financeModalTitle');
+  if (title) title.innerHTML = `<i class="bi bi-file-earmark-spreadsheet me-2 text-info"></i>Transaction: <span class="font-monospace">${txn.txnRef || txn.id.slice(0, 8)}</span>`;
+
+  body.innerHTML = `
+    <div class="p-2">
+      <div class="row g-3">
+        <div class="col-6">
+          <small class="text-muted d-block">Transaction Type</small>
+          <span class="badge ${txn.type === 'Revenue' ? 'text-bg-success' : 'text-bg-danger'}">${txn.type}</span>
+        </div>
+        <div class="col-6">
+          <small class="text-muted d-block">Status</small>
+          <span class="badge ${txn.status === 'Completed' ? 'text-bg-success' : 'text-bg-warning'}">${txn.status || 'Completed'}</span>
+        </div>
         <div class="col-6">
           <small class="text-muted d-block">Amount</small>
-          <div class="fs-4 fw-bold ${txn.type === 'Revenue' ? 'text-success' : 'text-light'}">${formatCurrency(txn.amount)}</div>
+          <div class="h5 fw-bold ${txn.type === 'Revenue' ? 'text-success' : 'text-danger'} mb-0">${formatCurrency(txn.amount)}</div>
         </div>
         <div class="col-6">
-          <small class="text-muted d-block">Transaction Date</small>
+          <small class="text-muted d-block">Date</small>
           <div class="fw-semibold">${formatDate(txn.date)}</div>
         </div>
         <div class="col-6">
@@ -252,7 +321,7 @@ export function openTransactionDetailModal(txnId) {
           <div class="fw-semibold">${txn.category}</div>
         </div>
         <div class="col-6">
-          <small class="text-muted d-block">Department / Cost Center</small>
+          <small class="text-muted d-block">Department</small>
           <div class="fw-semibold">${txn.department || 'General'}</div>
         </div>
         <div class="col-6">
@@ -264,7 +333,7 @@ export function openTransactionDetailModal(txnId) {
           <div class="fw-semibold">${txn.paymentMethod || 'Bank Transfer'}</div>
         </div>
         <div class="col-12">
-          <small class="text-muted d-block">Reference / Invoice Number</small>
+          <small class="text-muted d-block">Reference / Invoice No</small>
           <div class="font-monospace">${txn.referenceNo || '—'}</div>
         </div>
         <div class="col-12">
@@ -272,7 +341,7 @@ export function openTransactionDetailModal(txnId) {
           <div class="p-2 bg-secondary bg-opacity-10 border rounded">${txn.description || 'No additional notes provided.'}</div>
         </div>
         <div class="col-12 small text-muted text-end">
-          Recorded by ${txn.createdBy || 'Admin'} on ${formatDate(txn.createdAt || txn.date)}
+          Recorded by ${txn.createdBy || 'Financial Officer'} on ${formatDate(txn.createdAt || txn.date)}
         </div>
       </div>
     </div>
@@ -280,6 +349,191 @@ export function openTransactionDetailModal(txnId) {
 
   const modal = new bootstrap.Modal(modalEl);
   modal.show();
+}
+
+// ── Expense Vouchers & Claims Workflow ──
+export function renderExpenseVouchers() {
+  const vouchers = state.db?.expenseVouchers || [];
+  const statusFilter = dom.voucherStatusFilter?.value || 'all';
+
+  const filtered = vouchers.filter(v => statusFilter === 'all' || v.status === statusFilter);
+
+  const pendingCount = vouchers.filter(v => v.status === 'Pending Review').length;
+  const disbursedTotal = vouchers.filter(v => v.status === 'Disbursed').reduce((sum, v) => sum + Number(v.amount || 0), 0);
+
+  if (dom.vouchersPendingMetric) dom.vouchersPendingMetric.textContent = `${pendingCount} Pending`;
+  if (dom.vouchersDisbursedMetric) dom.vouchersDisbursedMetric.textContent = formatCurrency(disbursedTotal);
+
+  const vouchersTable = document.getElementById('vouchersTableBody') || dom.vouchersTableBody;
+  if (!vouchersTable) return;
+
+  if (filtered.length === 0) {
+    vouchersTable.innerHTML = `
+      <tr>
+        <td colspan="7" class="text-center py-4 text-muted">
+          <i class="bi bi-receipt fs-3 d-block mb-2 text-secondary"></i>
+          No expense vouchers or claims found.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  const isFinancialOfficerOrCeo = ['ceo', 'finance_officer'].includes(state.session?.role) || ['ceo', 'finance_officer'].includes(state.session?.actualRole);
+
+  vouchersTable.innerHTML = filtered.map((v) => {
+    let statusBadge = 'badge text-bg-warning';
+    if (v.status === 'Approved') statusBadge = 'badge text-bg-info';
+    if (v.status === 'Disbursed') statusBadge = 'badge text-bg-success';
+    if (v.status === 'Rejected') statusBadge = 'badge text-bg-danger';
+
+    let actionBtns = '';
+    if (isFinancialOfficerOrCeo) {
+      if (v.status === 'Pending Review') {
+        actionBtns = `
+          <button class="btn btn-sm btn-outline-success" data-action="approve-voucher" data-id="${v.id}" title="Approve Claim"><i class="bi bi-check-lg me-1"></i>Approve</button>
+          <button class="btn btn-sm btn-outline-danger" data-action="reject-voucher" data-id="${v.id}" title="Reject Claim"><i class="bi bi-x-lg me-1"></i>Reject</button>
+        `;
+      } else if (v.status === 'Approved') {
+        actionBtns = `
+          <button class="btn btn-sm btn-success" data-action="disburse-voucher" data-id="${v.id}" title="Disburse & Post to General Ledger"><i class="bi bi-cash me-1"></i>Disburse</button>
+          <button class="btn btn-sm btn-outline-danger" data-action="reject-voucher" data-id="${v.id}" title="Reject Claim"><i class="bi bi-x-lg me-1"></i>Reject</button>
+        `;
+      } else if (v.status === 'Disbursed') {
+        actionBtns = `<span class="badge text-bg-dark border border-success text-success"><i class="bi bi-check-all me-1"></i>Paid (${v.disbursementTxnRef || 'TXN'})</span>`;
+      } else {
+        actionBtns = `<span class="text-muted small">${v.rejectionReason || 'Declined'}</span>`;
+      }
+    } else {
+      actionBtns = `<span class="${statusBadge}">${v.status}</span>`;
+    }
+
+    return `
+      <tr>
+        <td>
+          <span class="font-monospace text-info fw-semibold">${v.id}</span>
+          <div class="small text-muted">${formatDate(v.date)}</div>
+        </td>
+        <td>
+          <div class="fw-semibold text-white">${v.applicantName}</div>
+          <small class="text-muted">${v.applicantEmail || 'Staff'}</small>
+        </td>
+        <td>
+          <span class="badge text-bg-secondary font-monospace text-uppercase">${v.department || 'general'}</span>
+          <div class="small text-muted">${v.category}</div>
+        </td>
+        <td>
+          <div class="text-truncate" style="max-width: 200px;" title="${v.description}">${v.description}</div>
+        </td>
+        <td class="text-end fw-bold text-light">${formatCurrency(v.amount)}</td>
+        <td><span class="${statusBadge}">${v.status}</span></td>
+        <td class="text-end">
+          <div class="btn-group btn-group-sm">
+            ${actionBtns}
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+export async function submitExpenseVoucherForm(event, refreshAll) {
+  event.preventDefault();
+  const applicantName = dom.voucherApplicantName?.value?.trim() || state.session?.name || 'Staff Member';
+  const applicantEmail = dom.voucherApplicantEmail?.value?.trim() || state.session?.email || '';
+  const department = dom.voucherDept?.value || 'general';
+  const category = dom.voucherCategory?.value || 'School Supplies';
+  const amount = Number(dom.voucherAmount?.value || 0);
+  const date = dom.voucherDate?.value || todayISO(0);
+  const description = dom.voucherDescription?.value?.trim() || '';
+
+  if (amount <= 0) {
+    showToast('Please enter a valid expense voucher amount.', 'warning');
+    return;
+  }
+
+  const voucher = {
+    id: `VOUCH-${Date.now().toString().slice(-6)}`,
+    applicantName,
+    applicantEmail,
+    department,
+    category,
+    amount,
+    date,
+    description,
+    status: 'Pending Review',
+    createdAt: new Date().toISOString()
+  };
+
+  if (!state.db.expenseVouchers) state.db.expenseVouchers = [];
+  state.db.expenseVouchers.unshift(voucher);
+  await saveDatabase();
+
+  resetVoucherForm();
+  showToast(`Expense voucher ${voucher.id} submitted for treasury review.`, 'success');
+  if (typeof refreshAll === 'function') refreshAll();
+}
+
+export function resetVoucherForm() {
+  if (dom.voucherForm) dom.voucherForm.reset();
+  if (dom.voucherDate) dom.voucherDate.value = todayISO(0);
+  if (dom.voucherApplicantName && state.session) dom.voucherApplicantName.value = state.session.name || '';
+  if (dom.voucherApplicantEmail && state.session) dom.voucherApplicantEmail.value = state.session.email || '';
+}
+
+export async function handleVoucherAction(action, voucherId, refreshAll) {
+  const isAuthorized = ['ceo', 'finance_officer'].includes(state.session?.role) || ['ceo', 'finance_officer'].includes(state.session?.actualRole);
+  if (!isAuthorized) {
+    showToast('Permission denied: Only Executive Management or Financial Officer can approve or disburse vouchers.', 'danger');
+    return;
+  }
+
+  const voucher = (state.db?.expenseVouchers || []).find(v => v.id === voucherId);
+  if (!voucher) return;
+
+  if (action === 'approve') {
+    voucher.status = 'Approved';
+    voucher.reviewedBy = state.session?.name || 'Financial Officer';
+    voucher.reviewedAt = new Date().toISOString();
+    showToast(`Voucher ${voucher.id} approved for disbursement.`, 'success');
+  } else if (action === 'disburse') {
+    voucher.status = 'Disbursed';
+    voucher.reviewedBy = state.session?.name || 'Financial Officer';
+    voucher.reviewedAt = new Date().toISOString();
+
+    // Create automatic Expense record in General Ledger
+    if (!state.db.financeTransactions) state.db.financeTransactions = [];
+    const txnRef = generateTransactionRef();
+    const newTxn = {
+      id: crypto.randomUUID(),
+      txnRef,
+      type: 'Expense',
+      category: voucher.category || 'Operations',
+      department: voucher.department || 'General',
+      amount: Number(voucher.amount || 0),
+      date: todayISO(0),
+      paymentMethod: 'Bank Transfer',
+      status: 'Completed',
+      referenceNo: voucher.id,
+      payeePayer: voucher.applicantName,
+      description: `Disbursed voucher ${voucher.id}: ${voucher.description}`,
+      createdAt: new Date().toISOString(),
+      createdBy: state.session?.email || 'finance.officer@hlts.local'
+    };
+    state.db.financeTransactions.push(newTxn);
+    voucher.disbursementTxnRef = txnRef;
+    showToast(`Voucher ${voucher.id} disbursed and posted to General Ledger (${txnRef}).`, 'success');
+  } else if (action === 'reject') {
+    const reason = prompt('Please specify rejection reason for this claim:') || 'Requirements not met';
+    voucher.status = 'Rejected';
+    voucher.rejectionReason = reason;
+    voucher.reviewedBy = state.session?.name || 'Financial Officer';
+    voucher.reviewedAt = new Date().toISOString();
+    showToast(`Voucher ${voucher.id} marked as rejected.`, 'info');
+  }
+
+  await saveDatabase();
+  if (typeof refreshAll === 'function') refreshAll();
 }
 
 // ── Chart.js Visualizations ──

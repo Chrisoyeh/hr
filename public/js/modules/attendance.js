@@ -109,8 +109,9 @@ export function renderAttendance() {
         </tr>`;
     }).join('');
 
-  if (dom.attendanceTableBody) {
-    dom.attendanceTableBody.innerHTML = rows || `<tr><td colspan="9" class="text-center text-muted py-4">${query ? 'No attendance logs found.' : 'No attendance records for today. Use the date filter or search to view other dates.'}</td></tr>`;
+  const attendanceTable = document.getElementById('attendanceTableBody') || dom.attendanceTableBody;
+  if (attendanceTable) {
+    attendanceTable.innerHTML = rows || `<tr><td colspan="9" class="text-center text-muted py-4">${query ? 'No attendance logs found.' : 'No attendance records for today. Use the date filter or search to view other dates.'}</td></tr>`;
   }
   if (dom.adminAttendanceLockStatus) {
     dom.adminAttendanceLockStatus.textContent = getAttendanceLockState() ? 'Locked' : 'Open';

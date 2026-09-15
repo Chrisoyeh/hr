@@ -139,6 +139,11 @@ export function renderBudget(getPayrollTotals) {
 
 export async function submitBudget(event, refreshAll) {
   event.preventDefault();
+  const isAuthorized = ['ceo', 'finance_officer'].includes(state.session?.role) || ['ceo', 'finance_officer'].includes(state.session?.actualRole);
+  if (!isAuthorized) {
+    showToast('Permission denied: Only Executive Management or Financial Officer can modify company budgets.', 'danger');
+    return;
+  }
   const periodKey = getCurrentPayrollPeriodKey();
 
   if (!state.db.departmentBudgets) state.db.departmentBudgets = {};

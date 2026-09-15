@@ -4,7 +4,7 @@ import { saveDatabase } from '../services/firestore.js';
 import { showToast, isSchoolAssignedToSupervisor } from '../utils.js';
 
 export function renderSchoolsView() {
-  const isOpsManager = state.session?.role === 'admin' || state.session?.role === 'ops_manager';
+  const isOpsManager = ['admin', 'ops_manager', 'ceo'].includes(state.session?.role) || ['admin', 'ops_manager', 'ceo'].includes(state.session?.actualRole);
 
   const formCol = dom.schoolFormCol || document.getElementById('schoolFormCol');
   const tableCol = dom.schoolsTableCol || document.getElementById('schoolsTableCol');
@@ -31,7 +31,7 @@ export function renderSchoolsView() {
     const currentVal = dom.schoolSupervisor.value;
     const supMap = new Map();
     (state.db?.users || []).forEach(u => {
-      if (['supervisor', 'admin', 'ops_manager'].includes(u.role) && u.email) {
+      if (['supervisor', 'admin', 'ops_manager', 'ceo'].includes(u.role) && u.email) {
         supMap.set(u.email.toLowerCase(), { name: u.name, email: u.email, role: u.role });
       }
     });
@@ -40,13 +40,13 @@ export function renderSchoolsView() {
         supMap.set(e.email.toLowerCase(), { name: e.fullName, email: e.email, role: e.role });
       }
     });
-    const supervisors = Array.from(supMap.values());
+    const supervisors = Array.from(supMap.values()).filter(s => s.role === 'supervisor');
     dom.schoolSupervisor.innerHTML = '<option value="">Select Assigned Supervisor...</option>' + 
       supervisors.map(s => `<option value="${s.email}">${s.name}</option>`).join('');
     if (currentVal) dom.schoolSupervisor.value = currentVal;
   }
 
-  const tableBody = dom.schoolsTableBody;
+  const tableBody = document.getElementById('schoolsTableBody') || dom.schoolsTableBody;
   if (!tableBody) return;
 
   const search = dom.schoolSearch?.value.trim().toLowerCase() || '';
@@ -114,9 +114,9 @@ export function renderSchoolsView() {
 
 export async function upsertSchool(event, refreshAll) {
   event.preventDefault();
-  const isOpsManager = state.session?.role === 'admin' || state.session?.role === 'ops_manager' || state.session?.actualRole === 'admin' || state.session?.actualRole === 'ops_manager';
+  const isOpsManager = ['admin', 'ops_manager', 'ceo'].includes(state.session?.role) || ['admin', 'ops_manager', 'ceo'].includes(state.session?.actualRole);
   if (!isOpsManager) {
-    showToast('Permission denied: Only the Operations Manager can add or update partner schools.', 'danger');
+    showToast('Permission denied: Only the Operations Manager or Executive Management can add or update partner schools.', 'danger');
     return;
   }
 
@@ -154,9 +154,9 @@ export function resetSchoolForm() {
 }
 
 export async function deleteSchool(id, refreshAll) {
-  const isOpsManager = state.session?.role === 'admin' || state.session?.role === 'ops_manager' || state.session?.actualRole === 'admin' || state.session?.actualRole === 'ops_manager';
+  const isOpsManager = ['admin', 'ops_manager', 'ceo'].includes(state.session?.role) || ['admin', 'ops_manager', 'ceo'].includes(state.session?.actualRole);
   if (!isOpsManager) {
-    showToast('Permission denied: Only the Operations Manager can delete schools.', 'danger');
+    showToast('Permission denied: Only the Operations Manager or Executive Management can delete schools.', 'danger');
     return;
   }
 

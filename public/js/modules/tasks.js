@@ -48,8 +48,9 @@ export function renderTasks() {
         </tr>`;
     }).join('');
 
-  if (dom.taskTableBody) {
-    dom.taskTableBody.innerHTML = rows || `<tr><td colspan="8" class="text-center text-muted py-4">${showAll || query ? 'No tasks found.' : 'No active tasks. Switch to "All tasks" to view completed ones.'}</td></tr>`;
+  const taskTable = document.getElementById('taskTableBody') || dom.taskTableBody;
+  if (taskTable) {
+    taskTable.innerHTML = rows || `<tr><td colspan="8" class="text-center text-muted py-4">${showAll || query ? 'No tasks found.' : 'No active tasks. Switch to "All tasks" to view completed ones.'}</td></tr>`;
   }
 }
 

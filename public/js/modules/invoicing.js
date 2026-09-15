@@ -35,11 +35,12 @@ export function renderInvoices() {
   if (dom.invoicesReceivedMetric) dom.invoicesReceivedMetric.textContent = formatCurrency(totalReceived);
   if (dom.invoicesOutstandingMetric) dom.invoicesOutstandingMetric.textContent = formatCurrency(totalOutstanding);
 
-  if (dom.invoicesTableBody) {
+  const invoicesTable = document.getElementById('invoicesTableBody') || dom.invoicesTableBody;
+  if (invoicesTable) {
     if (filtered.length === 0) {
-      dom.invoicesTableBody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">No client invoices found.</td></tr>';
+      invoicesTable.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">No client invoices found.</td></tr>';
     } else {
-      dom.invoicesTableBody.innerHTML = filtered.map((inv) => {
+      invoicesTable.innerHTML = filtered.map((inv) => {
         let badgeClass = 'chip-secondary';
         if (inv.status === 'Paid') badgeClass = 'chip-success';
         else if (inv.status === 'Sent') badgeClass = 'chip-warning';
@@ -84,6 +85,11 @@ export function populateInvoiceSchoolOptions() {
 
 export async function submitInvoice(event, refreshAll) {
   event.preventDefault();
+  const isAuthorized = ['ceo', 'finance_officer'].includes(state.session?.role) || ['ceo', 'finance_officer'].includes(state.session?.actualRole);
+  if (!isAuthorized) {
+    showToast('Permission denied: Only Executive Management or Financial Officer can generate client invoices.', 'danger');
+    return;
+  }
   if (!state.db.clientInvoices) state.db.clientInvoices = [];
 
   const invoiceId = dom.invoiceId?.value;
@@ -146,6 +152,12 @@ export function resetInvoiceForm() {
 }
 
 export async function settleInvoice(invoiceId, refreshAll) {
+  const isAuthorized = ['ceo', 'finance_officer'].includes(state.session?.role) || ['ceo', 'finance_officer'].includes(state.session?.actualRole);
+  if (!isAuthorized) {
+    showToast('Permission denied: Only Executive Management or Financial Officer can settle invoices.', 'danger');
+    return;
+  }
+
   const inv = (state.db?.clientInvoices || []).find(i => i.id === invoiceId);
   if (!inv) return;
   if (inv.status === 'Paid') {

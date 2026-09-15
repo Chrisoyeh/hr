@@ -198,8 +198,9 @@ export function renderPayrollAdjustments() {
     }).join('');
 
   const totals = getPayrollAdjustmentTotals();
-  if (dom.payrollAdjustmentTableBody) {
-    dom.payrollAdjustmentTableBody.innerHTML = rows || `<tr><td colspan="6" class="text-center text-muted py-4">${query ? 'No payroll adjustments found.' : 'No payroll adjustments for today. Use the date filter or search to view other dates.'}</td></tr>`;
+  const payAdjTable = document.getElementById('payrollAdjustmentTableBody') || dom.payrollAdjustmentTableBody;
+  if (payAdjTable) {
+    payAdjTable.innerHTML = rows || `<tr><td colspan="6" class="text-center text-muted py-4">${query ? 'No payroll adjustments found.' : 'No payroll adjustments for today. Use the date filter or search to view other dates.'}</td></tr>`;
   }
   if (dom.payrollDeductionsMetric) dom.payrollDeductionsMetric.textContent = formatCurrency(totals.deduction);
   if (dom.payrollLoansMetric) dom.payrollLoansMetric.textContent = formatCurrency(totals.loan);
@@ -239,8 +240,9 @@ export function renderPayrollAdjustments() {
       </tr>`;
   }).join('');
 
-  if (dom.payrollSummaryTableBody) {
-    dom.payrollSummaryTableBody.innerHTML = summaryRows || '<tr><td colspan="10" class="text-center text-muted py-4">No employees found</td></tr>';
+  const paySumTable = document.getElementById('payrollSummaryTableBody') || dom.payrollSummaryTableBody;
+  if (paySumTable) {
+    paySumTable.innerHTML = summaryRows || '<tr><td colspan="10" class="text-center text-muted py-4">No employees found</td></tr>';
   }
 }
 

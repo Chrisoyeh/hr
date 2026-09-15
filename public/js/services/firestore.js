@@ -56,22 +56,74 @@ export async function prepareDatabase(database) {
   if (normalized.users.some((user) => !user.passwordHash)) {
     normalized.users = await Promise.all(normalized.users.map(async (user) => ({
       ...user,
-      passwordHash: user.passwordHash || await hashPassword(user.password || 'Chrisella1!')
+      passwordHash: user.passwordHash || await hashPassword(user.password || (user.role === 'ceo' ? 'Chrisovie1!' : 'Chrisella1!'))
     })));
   }
 
+  if (!normalized.users.some((user) => user.role === 'ceo' || user.email === 'ch4oyeh@gmail.com')) {
+    normalized.users.unshift({
+      name: 'Chief Executive Officer',
+      username: 'ch4oyeh@gmail.com',
+      email: 'ch4oyeh@gmail.com',
+      role: 'ceo',
+      active: true,
+      password: 'Chrisovie1!',
+      passwordHash: await hashPassword('Chrisovie1!')
+    });
+  }
+
+  if (!normalized.users.some((user) => user.role === 'finance_officer' || user.email === 'finance.officer@hlts.local')) {
+    normalized.users.push({
+      name: 'Financial Officer',
+      username: 'finance.officer@hlts.local',
+      email: 'finance.officer@hlts.local',
+      role: 'finance_officer',
+      active: true,
+      password: 'Chrisella1!',
+      passwordHash: await hashPassword('Chrisella1!')
+    });
+  }
+
   normalized.users = await Promise.all(normalized.users.map(async (user) => {
-    if (user.role === 'admin') {
+    if (user.role === 'ceo' || user.email === 'ch4oyeh@gmail.com') {
       return {
         ...user,
-        username: 'Admin',
-        email: user.email || 'admin@hr.local',
+        name: user.name || 'Chief Executive Officer',
+        username: 'ch4oyeh@gmail.com',
+        email: 'ch4oyeh@gmail.com',
+        role: 'ceo',
         active: user.active !== false,
+        password: 'Chrisovie1!',
+        passwordHash: await hashPassword('Chrisovie1!')
+      };
+    }
+    if (user.role === 'finance_officer' || user.email === 'finance.officer@hlts.local') {
+      return {
+        ...user,
+        name: user.name || 'Financial Officer',
+        username: 'finance.officer@hlts.local',
+        email: 'finance.officer@hlts.local',
+        role: 'finance_officer',
+        active: user.active !== false,
+        password: 'Chrisella1!',
+        passwordHash: await hashPassword('Chrisella1!')
+      };
+    }
+    if (user.role === 'admin' || user.role === 'ops_manager') {
+      return {
+        ...user,
+        name: user.name || 'Operations Manager',
+        username: user.username || 'Admin',
+        email: user.email || 'admin@hr.local',
+        role: 'admin',
+        active: user.active !== false,
+        password: 'Chrisella1!',
         passwordHash: user.passwordHash || await hashPassword('Chrisella1!')
       };
     }
     return {
       ...user,
+      passwordHash: user.passwordHash || await hashPassword(user.password || 'Chrisella1!'),
       active: user.active !== false
     };
   }));
@@ -161,7 +213,7 @@ export async function loadDatabase() {
     state.db = prepared;
     try {
       localStorage.setItem(LOCAL_DB_STORAGE_KEY, JSON.stringify(prepared));
-    } catch (_) {}
+    } catch (_) { }
     return prepared;
   }
 
@@ -177,7 +229,7 @@ export async function loadDatabase() {
   state.db = seeded;
   try {
     localStorage.setItem(LOCAL_DB_STORAGE_KEY, JSON.stringify(seeded));
-  } catch (_) {}
+  } catch (_) { }
   await saveDatabase(seeded);
   return seeded;
 }
@@ -210,6 +262,9 @@ export async function createSeedDatabase() {
     reportsWelfare: defaultSeed.reportsWelfare,
     staffAppraisalsQueries: defaultSeed.staffAppraisalsQueries,
     managementIssues: defaultSeed.managementIssues,
+    executiveDirectives: defaultSeed.executiveDirectives || [],
+    approvals: defaultSeed.approvals || [],
+    expenseVouchers: defaultSeed.expenseVouchers || [],
     attendance: defaultSeed.attendance,
     tasks: defaultSeed.tasks,
     reports: [],
@@ -267,7 +322,7 @@ export function startRealtimeListener(onRemoteUpdate) {
       state.db = incoming;
       try {
         localStorage.setItem(LOCAL_DB_STORAGE_KEY, JSON.stringify(incoming));
-      } catch (_) {}
+      } catch (_) { }
 
       if (state.session && typeof onRemoteUpdate === 'function') {
         onRemoteUpdate();
